@@ -113,7 +113,7 @@ export default function App() {
                 alt="DEXY CD Converter"
               />
               <img
-                className="h-16 w-auto max-w-[240px] object-contain sm:h-20 sm:max-w-[300px]"
+                className="h-20 w-auto max-w-[270px] object-contain sm:h-24 sm:max-w-[330px]"
                 src="/assets/mti-logo.jpg"
                 alt="MTI Integrated Business Solution"
               />
