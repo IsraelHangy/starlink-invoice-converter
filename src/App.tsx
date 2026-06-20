@@ -3,6 +3,7 @@ import {
   AlertCircle,
   ArrowRightLeft,
   Download,
+  Loader2,
   Play,
 } from "lucide-react";
 import UploadCard from "./components/UploadCard";
@@ -19,10 +20,25 @@ export default function App() {
   const [conversion, setConversion] = useState<ConversionResult | null>(null);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("before");
   const [error, setError] = useState<string | null>(null);
+  const [isReadingWorkbook, setIsReadingWorkbook] = useState(false);
+  const [isConverting, setIsConverting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
-  const canConvert = Boolean(workbook?.rows.length);
-  const canExport = Boolean(conversion?.rows.length);
+  const canConvert =
+    Boolean(workbook?.rows.length) &&
+    !isReadingWorkbook &&
+    !isConverting &&
+    !isExporting;
+  const canExport =
+    Boolean(conversion?.rows.length) &&
+    !isReadingWorkbook &&
+    !isConverting &&
+    !isExporting;
+  const processingMessage = getProcessingMessage({
+    isReadingWorkbook,
+    isConverting,
+    isExporting,
+  });
 
   const preview = useMemo(() => {
     if (previewMode === "after" && conversion) {
@@ -49,13 +65,17 @@ export default function App() {
     setError(null);
   };
 
-  const handleConvert = () => {
+  const handleConvert = async () => {
     if (!workbook) {
       setError("Importez d'abord un fichier Excel Starlink.");
       return;
     }
 
+    setIsConverting(true);
+    setError(null);
+
     try {
+      await waitForNextPaint();
       const convertedWorkbook = convertStarlinkToDexy(
         workbook.rows,
         workbook.columns,
@@ -72,6 +92,8 @@ export default function App() {
           ? caughtError.message
           : "Conversion impossible.",
       );
+    } finally {
+      setIsConverting(false);
     }
   };
 
@@ -131,12 +153,16 @@ export default function App() {
             <button
               className="inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-[#5f55d6] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#5147c4] disabled:cursor-not-allowed disabled:bg-slate-400 sm:min-w-36"
               type="button"
-              onClick={handleConvert}
+              onClick={() => void handleConvert()}
               disabled={!canConvert}
               title="Convertir le fichier Starlink importe"
             >
-              <Play aria-hidden="true" size={17} />
-              Convertir
+              {isConverting ? (
+                <Loader2 className="animate-spin" aria-hidden="true" size={17} />
+              ) : (
+                <Play aria-hidden="true" size={17} />
+              )}
+              {isConverting ? "Conversion..." : "Convertir"}
             </button>
             <button
               className="inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-[#b0003a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#960033] disabled:cursor-not-allowed disabled:bg-slate-400 sm:min-w-40"
@@ -159,11 +185,16 @@ export default function App() {
           <ValidationErrorAlert message={error} />
         ) : null}
 
+        {processingMessage ? (
+          <ProcessingStatus message={processingMessage} />
+        ) : null}
+
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(340px,0.75fr)]">
           <UploadCard
             workbook={workbook}
             onWorkbookLoaded={handleWorkbookLoaded}
             onError={setError}
+            onReadingChange={setIsReadingWorkbook}
           />
           <SummaryCard
             summary={conversion?.summary}
@@ -182,7 +213,7 @@ export default function App() {
               active={previewMode === "after"}
               onClick={() => setPreviewMode("after")}
               label="Après"
-              disabled={!conversion}
+              disabled={!conversion || isConverting}
             />
           </div>
 
@@ -212,6 +243,25 @@ interface PreviewToggleProps {
   disabled?: boolean;
 }
 
+function ProcessingStatus({ message }: { message: string }) {
+  return (
+    <div
+      className="flex items-start gap-3 rounded-lg border border-[#b7c7e1] bg-[#eef4ff] px-4 py-4 text-sm text-[#243b5a] shadow-sm"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2
+        className="mt-0.5 h-5 w-5 flex-none animate-spin text-[#5f55d6]"
+        aria-hidden="true"
+      />
+      <div>
+        <p className="font-semibold text-ink">Traitement en cours</p>
+        <p className="mt-1 leading-6">{message}</p>
+      </div>
+    </div>
+  );
+}
+
 function ValidationErrorAlert({ message }: { message: string }) {
   return (
     <div
@@ -235,11 +285,43 @@ function ValidationErrorAlert({ message }: { message: string }) {
   );
 }
 
+function getProcessingMessage({
+  isReadingWorkbook,
+  isConverting,
+  isExporting,
+}: {
+  isReadingWorkbook: boolean;
+  isConverting: boolean;
+  isExporting: boolean;
+}): string | null {
+  if (isReadingWorkbook) {
+    return "Lecture du fichier Excel en cours. Pour un fichier volumineux avec plusieurs factures, cette étape peut prendre quelques minutes.";
+  }
+
+  if (isConverting) {
+    return "Conversion DEXY en cours : regroupement des factures, recalcul des lignes et génération des lignes TAX. Merci de garder cette page ouverte.";
+  }
+
+  if (isExporting) {
+    return "Génération du fichier Excel DEXY conforme. Le téléchargement va démarrer automatiquement.";
+  }
+
+  return null;
+}
+
 function formatExportDate(value: Date): string {
   const day = String(value.getDate()).padStart(2, "0");
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const year = value.getFullYear();
   return `${day}-${month}-${year}`;
+}
+
+function waitForNextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.setTimeout(resolve, 0);
+    });
+  });
 }
 
 function PreviewToggle({

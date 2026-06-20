@@ -7,12 +7,14 @@ interface UploadCardProps {
   workbook: ImportedWorkbook | null;
   onWorkbookLoaded: (workbook: ImportedWorkbook) => void;
   onError: (message: string) => void;
+  onReadingChange?: (isReading: boolean) => void;
 }
 
 export default function UploadCard({
   workbook,
   onWorkbookLoaded,
   onError,
+  onReadingChange,
 }: UploadCardProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -29,6 +31,7 @@ export default function UploadCard({
     }
 
     setIsReading(true);
+    onReadingChange?.(true);
 
     try {
       const importedWorkbook = await readExcelFile(file);
@@ -37,6 +40,7 @@ export default function UploadCard({
       onError(error instanceof Error ? error.message : "Lecture du fichier impossible.");
     } finally {
       setIsReading(false);
+      onReadingChange?.(false);
     }
   };
 
@@ -93,8 +97,18 @@ export default function UploadCard({
           <Upload className="text-[#5f55d6]" aria-hidden="true" size={30} />
         )}
         <p className="mt-3 text-sm font-medium text-ink">
-          {workbook ? "Fichier Starlink chargé" : "Glissez un fichier ici ou choisissez-le manuellement."}
+          {isReading
+            ? "Lecture et analyse du fichier Excel en cours..."
+            : workbook
+              ? "Fichier Starlink chargé"
+              : "Glissez un fichier ici ou choisissez-le manuellement."}
         </p>
+        {isReading ? (
+          <p className="mt-2 max-w-md text-xs leading-5 text-slate-500">
+            Les fichiers avec beaucoup de factures peuvent prendre quelques
+            minutes. Gardez cette page ouverte jusqu'à la fin du traitement.
+          </p>
+        ) : null}
         <button
           className="mt-4 inline-flex items-center gap-2 rounded-md bg-[#5f55d6] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#5147c4] disabled:cursor-not-allowed disabled:bg-slate-400"
           type="button"
