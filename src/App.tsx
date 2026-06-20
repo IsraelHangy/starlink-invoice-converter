@@ -108,12 +108,12 @@ export default function App() {
           <header className="flex flex-col items-center">
             <div className="flex w-full flex-col items-center justify-center gap-5 sm:flex-row sm:gap-8">
               <img
-                className="h-auto w-52 max-w-full object-contain sm:w-64"
-                src="/assets/dexy-logo.png"
-                alt="DEXY CD Certification"
+                className="h-20 w-auto max-w-[280px] object-contain sm:h-24 sm:max-w-[340px]"
+                src="/assets/dexy-converter-logo.png"
+                alt="DEXY CD Converter"
               />
               <img
-                className="h-auto w-44 max-w-full object-contain sm:w-56"
+                className="h-16 w-auto max-w-[240px] object-contain sm:h-20 sm:max-w-[300px]"
                 src="/assets/mti-logo.jpg"
                 alt="MTI Integrated Business Solution"
               />
