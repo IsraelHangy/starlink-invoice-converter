@@ -1,10 +1,10 @@
 import { ChangeEvent, DragEvent, useRef, useState } from "react";
-import { CheckCircle2, FileSpreadsheet, Upload } from "lucide-react";
+import { CheckCircle2, FileSpreadsheet, Loader2, Upload } from "lucide-react";
 import type { ImportedWorkbook } from "../types";
-import { readExcelFile } from "../utils/excel";
 
 interface UploadCardProps {
   workbook: ImportedWorkbook | null;
+  onReadFile: (file: File) => Promise<ImportedWorkbook>;
   onWorkbookLoaded: (workbook: ImportedWorkbook) => void;
   onError: (message: string) => void;
   onReadingChange?: (isReading: boolean) => void;
@@ -12,6 +12,7 @@ interface UploadCardProps {
 
 export default function UploadCard({
   workbook,
+  onReadFile,
   onWorkbookLoaded,
   onError,
   onReadingChange,
@@ -34,7 +35,7 @@ export default function UploadCard({
     onReadingChange?.(true);
 
     try {
-      const importedWorkbook = await readExcelFile(file);
+      const importedWorkbook = await onReadFile(file);
       onWorkbookLoaded(importedWorkbook);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Lecture du fichier impossible.");
@@ -91,7 +92,9 @@ export default function UploadCard({
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
       >
-        {workbook ? (
+        {isReading ? (
+          <Loader2 className="animate-spin text-[#5f55d6]" aria-hidden="true" size={32} />
+        ) : workbook ? (
           <CheckCircle2 className="text-[#5f55d6]" aria-hidden="true" size={32} />
         ) : (
           <Upload className="text-[#5f55d6]" aria-hidden="true" size={30} />

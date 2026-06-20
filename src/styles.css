@@ -33,3 +33,52 @@ input:focus-visible {
 ::selection {
   background: rgba(15, 118, 110, 0.18);
 }
+
+.dexy-processing-ring {
+  animation: dexy-spin 0.75s linear infinite;
+}
+
+.dexy-processing-dot {
+  animation: dexy-pulse 1.1s ease-in-out infinite;
+}
+
+.dexy-progress-bar {
+  animation: dexy-progress 1.35s ease-in-out infinite;
+  transform-origin: left center;
+  width: 42%;
+}
+
+@keyframes dexy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes dexy-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes dexy-progress {
+  0% {
+    transform: translateX(-115%);
+    width: 34%;
+  }
+
+  45% {
+    width: 58%;
+  }
+
+  100% {
+    transform: translateX(295%);
+    width: 34%;
+  }
+}

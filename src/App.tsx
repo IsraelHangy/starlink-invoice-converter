@@ -10,8 +10,11 @@ import UploadCard from "./components/UploadCard";
 import PreviewTable from "./components/PreviewTable";
 import SummaryCard from "./components/SummaryCard";
 import type { ConversionResult, ImportedWorkbook } from "./types";
-import { convertStarlinkToDexy } from "./utils/converter";
 import { exportExcelFile } from "./utils/excel";
+import {
+  convertStarlinkToDexyInWorker,
+  readExcelFileInWorker,
+} from "./utils/processingWorkerClient";
 
 type PreviewMode = "before" | "after";
 
@@ -75,11 +78,10 @@ export default function App() {
     setError(null);
 
     try {
-      await waitForNextPaint();
-      const convertedWorkbook = convertStarlinkToDexy(
+      const convertedWorkbook = await convertStarlinkToDexyInWorker(
         workbook.rows,
         workbook.columns,
-        { normalizationDate: workbook.uploadedAt },
+        workbook.uploadedAt,
       );
       setConversion(convertedWorkbook);
       setPreviewMode("after");
@@ -192,6 +194,7 @@ export default function App() {
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(340px,0.75fr)]">
           <UploadCard
             workbook={workbook}
+            onReadFile={readExcelFileInWorker}
             onWorkbookLoaded={handleWorkbookLoaded}
             onError={setError}
             onReadingChange={setIsReadingWorkbook}
@@ -246,17 +249,25 @@ interface PreviewToggleProps {
 function ProcessingStatus({ message }: { message: string }) {
   return (
     <div
-      className="flex items-start gap-3 rounded-lg border border-[#b7c7e1] bg-[#eef4ff] px-4 py-4 text-sm text-[#243b5a] shadow-sm"
+      className="relative overflow-hidden rounded-lg border border-[#cbc5ff] bg-[#f5f3ff] px-4 py-4 text-sm text-[#29224f] shadow-sm sm:px-5"
       role="status"
       aria-live="polite"
     >
-      <Loader2
-        className="mt-0.5 h-5 w-5 flex-none animate-spin text-[#5f55d6]"
-        aria-hidden="true"
-      />
-      <div>
-        <p className="font-semibold text-ink">Traitement en cours</p>
-        <p className="mt-1 leading-6">{message}</p>
+      <div className="absolute inset-x-0 top-0 h-1 overflow-hidden bg-[#e1ddff]">
+        <span className="dexy-progress-bar block h-full rounded-full bg-[#5f55d6]" />
+      </div>
+      <div className="flex items-start gap-4">
+        <div className="relative mt-0.5 flex h-10 w-10 flex-none items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-[#ddd8ff]">
+          <span className="dexy-processing-ring absolute inset-1 rounded-full border-2 border-[#d9d4ff] border-t-[#5f55d6]" />
+          <span className="dexy-processing-dot h-2.5 w-2.5 rounded-full bg-[#0f9af0]" />
+        </div>
+        <div className="min-w-0">
+          <p className="font-semibold text-[#171039]">Traitement en cours</p>
+          <p className="mt-1 leading-6">{message}</p>
+          <p className="mt-2 text-xs font-medium text-[#5f55d6]">
+            Merci de patienter, la page reste active pendant la normalisation.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -314,14 +325,6 @@ function formatExportDate(value: Date): string {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const year = value.getFullYear();
   return `${day}-${month}-${year}`;
-}
-
-function waitForNextPaint(): Promise<void> {
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => {
-      window.setTimeout(resolve, 0);
-    });
-  });
 }
 
 function PreviewToggle({
