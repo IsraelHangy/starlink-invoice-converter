@@ -106,14 +106,14 @@ export default function App() {
       <div className="border-b border-slate-200 bg-white">
         <div className="mx-auto w-full max-w-5xl px-4 py-8 text-center sm:px-6 lg:px-8">
           <header className="flex flex-col items-center">
-            <div className="flex w-full flex-col items-center justify-center gap-5 sm:flex-row sm:gap-8">
+            <div className="flex w-full items-center justify-center gap-3 sm:gap-8">
               <img
-                className="h-20 w-auto max-w-[280px] object-contain sm:h-24 sm:max-w-[340px]"
+                className="h-14 w-auto max-w-[48%] object-contain sm:h-24 sm:max-w-[340px]"
                 src="/assets/dexy-converter-logo.png"
                 alt="DEXY CD Converter"
               />
               <img
-                className="h-20 w-auto max-w-[270px] object-contain sm:h-24 sm:max-w-[330px]"
+                className="h-16 w-auto max-w-[45%] object-contain sm:h-24 sm:max-w-[330px]"
                 src="/assets/mti-logo.jpg"
                 alt="MTI Integrated Business Solution"
               />
