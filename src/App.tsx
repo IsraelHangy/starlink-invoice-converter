@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   ArrowRightLeft,
@@ -26,6 +26,8 @@ export default function App() {
   const [isReadingWorkbook, setIsReadingWorkbook] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [readingFileSize, setReadingFileSize] = useState<number | null>(null);
+  const [showProcessingStatus, setShowProcessingStatus] = useState(false);
 
   const canConvert =
     Boolean(workbook?.rows.length) &&
@@ -37,11 +39,37 @@ export default function App() {
     !isReadingWorkbook &&
     !isConverting &&
     !isExporting;
+  const isProcessing = isReadingWorkbook || isConverting || isExporting;
+  const processingDelay = getProcessingDelay({
+    fileSize: readingFileSize,
+    isConverting,
+    isExporting,
+    isReadingWorkbook,
+    rowCount: workbook?.rows.length ?? 0,
+  });
   const processingMessage = getProcessingMessage({
+    fileSize: readingFileSize,
     isReadingWorkbook,
     isConverting,
     isExporting,
+    rowCount: workbook?.rows.length ?? 0,
   });
+
+  useEffect(() => {
+    if (!isProcessing) {
+      setShowProcessingStatus(false);
+      return;
+    }
+
+    setShowProcessingStatus(false);
+    const timeoutId = window.setTimeout(() => {
+      setShowProcessingStatus(true);
+    }, processingDelay);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [isProcessing, processingDelay]);
 
   const preview = useMemo(() => {
     if (previewMode === "after" && conversion) {
@@ -187,7 +215,7 @@ export default function App() {
           <ValidationErrorAlert message={error} />
         ) : null}
 
-        {processingMessage ? (
+        {showProcessingStatus && processingMessage ? (
           <ProcessingStatus message={processingMessage} />
         ) : null}
 
@@ -197,7 +225,10 @@ export default function App() {
             onReadFile={readExcelFileInWorker}
             onWorkbookLoaded={handleWorkbookLoaded}
             onError={setError}
-            onReadingChange={setIsReadingWorkbook}
+            onReadingChange={(isReading, file) => {
+              setIsReadingWorkbook(isReading);
+              setReadingFileSize(isReading ? file?.size ?? null : null);
+            }}
           />
           <SummaryCard
             summary={conversion?.summary}
@@ -265,7 +296,7 @@ function ProcessingStatus({ message }: { message: string }) {
           <p className="font-semibold text-[#171039]">Traitement en cours</p>
           <p className="mt-1 leading-6">{message}</p>
           <p className="mt-2 text-xs font-medium text-[#5f55d6]">
-            Merci de patienter, la page reste active pendant la normalisation.
+            Merci de patienter, la page reste active pendant la transformation.
           </p>
         </div>
       </div>
@@ -297,20 +328,30 @@ function ValidationErrorAlert({ message }: { message: string }) {
 }
 
 function getProcessingMessage({
+  fileSize,
   isReadingWorkbook,
   isConverting,
   isExporting,
+  rowCount,
 }: {
+  fileSize: number | null;
   isReadingWorkbook: boolean;
   isConverting: boolean;
   isExporting: boolean;
+  rowCount: number;
 }): string | null {
   if (isReadingWorkbook) {
-    return "Lecture du fichier Excel en cours. Pour un fichier volumineux avec plusieurs factures, cette étape peut prendre quelques minutes.";
+    const volumeLabel = getFileVolumeLabel(fileSize);
+    return `Lecture du fichier Excel en cours. La durée dépend du volume du fichier${volumeLabel ? ` (${volumeLabel})` : ""}.`;
   }
 
   if (isConverting) {
-    return "Conversion DEXY en cours : regroupement des factures, recalcul des lignes et génération des lignes TAX. Merci de garder cette page ouverte.";
+    const volumeHint =
+      rowCount >= 250
+        ? "Ce volume peut prendre un peu plus de temps."
+        : "Pour un petit volume, cette étape doit rester rapide.";
+
+    return `Transformation DEXY en cours : regroupement des factures, recalcul des lignes et génération des lignes TAX. ${volumeHint}`;
   }
 
   if (isExporting) {
@@ -318,6 +359,64 @@ function getProcessingMessage({
   }
 
   return null;
+}
+
+function getProcessingDelay({
+  fileSize,
+  isReadingWorkbook,
+  isConverting,
+  isExporting,
+  rowCount,
+}: {
+  fileSize: number | null;
+  isReadingWorkbook: boolean;
+  isConverting: boolean;
+  isExporting: boolean;
+  rowCount: number;
+}): number {
+  if (isExporting) {
+    return 300;
+  }
+
+  if (isConverting) {
+    if (rowCount >= 250) {
+      return 120;
+    }
+
+    if (rowCount >= 80) {
+      return 220;
+    }
+
+    return 550;
+  }
+
+  if (isReadingWorkbook) {
+    if (fileSize !== null && fileSize >= 2_000_000) {
+      return 120;
+    }
+
+    if (fileSize !== null && fileSize >= 700_000) {
+      return 220;
+    }
+  }
+
+  return 550;
+}
+
+function getFileVolumeLabel(fileSize: number | null): string | null {
+  if (fileSize === null) {
+    return null;
+  }
+
+  if (fileSize >= 2_000_000) {
+    return "fichier volumineux";
+  }
+
+  if (fileSize >= 700_000) {
+    return "fichier moyen";
+  }
+
+  return "petit fichier";
 }
 
 function formatExportDate(value: Date): string {

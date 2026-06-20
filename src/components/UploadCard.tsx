@@ -7,7 +7,7 @@ interface UploadCardProps {
   onReadFile: (file: File) => Promise<ImportedWorkbook>;
   onWorkbookLoaded: (workbook: ImportedWorkbook) => void;
   onError: (message: string) => void;
-  onReadingChange?: (isReading: boolean) => void;
+  onReadingChange?: (isReading: boolean, file?: File) => void;
 }
 
 export default function UploadCard({
@@ -20,6 +20,7 @@ export default function UploadCard({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isReading, setIsReading] = useState(false);
+  const [readingFileSize, setReadingFileSize] = useState<number | null>(null);
 
   const handleFile = async (file?: File) => {
     if (!file) {
@@ -32,7 +33,8 @@ export default function UploadCard({
     }
 
     setIsReading(true);
-    onReadingChange?.(true);
+    setReadingFileSize(file.size);
+    onReadingChange?.(true, file);
 
     try {
       const importedWorkbook = await onReadFile(file);
@@ -41,6 +43,7 @@ export default function UploadCard({
       onError(error instanceof Error ? error.message : "Lecture du fichier impossible.");
     } finally {
       setIsReading(false);
+      setReadingFileSize(null);
       onReadingChange?.(false);
     }
   };
@@ -108,8 +111,8 @@ export default function UploadCard({
         </p>
         {isReading ? (
           <p className="mt-2 max-w-md text-xs leading-5 text-slate-500">
-            Les fichiers avec beaucoup de factures peuvent prendre quelques
-            minutes. Gardez cette page ouverte jusqu'à la fin du traitement.
+            La durée dépend du volume du fichier{readingFileSize ? ` (${formatFileSize(readingFileSize)})` : ""}.
+            Gardez cette page ouverte jusqu'à la fin de la transformation.
           </p>
         ) : null}
         <button
@@ -148,4 +151,12 @@ export default function UploadCard({
       ) : null}
     </section>
   );
+}
+
+function formatFileSize(sizeInBytes: number): string {
+  if (sizeInBytes >= 1_000_000) {
+    return `${(sizeInBytes / 1_000_000).toFixed(1)} Mo`;
+  }
+
+  return `${Math.max(1, Math.round(sizeInBytes / 1_000))} Ko`;
 }
