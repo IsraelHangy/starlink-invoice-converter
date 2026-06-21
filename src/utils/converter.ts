@@ -49,6 +49,11 @@ type InvoiceGroup = {
   taxTotal: number;
 };
 
+type InvoiceGroupingResult = {
+  groups: InvoiceGroup[];
+  skippedRowsWithoutInvoice: number;
+};
+
 const LINE_NUMBER_FALLBACK_COLUMN = "N° ligne";
 
 const INVOICE_COLUMN_CANDIDATES = [
@@ -187,11 +192,21 @@ export function convertStarlinkToDexy(
     dateColumn,
     dexyColumns,
   );
-  const groups = groupRowsByInvoice(rows, invoiceColumn, taxColumn);
+  const { groups, skippedRowsWithoutInvoice } = groupRowsByInvoice(
+    rows,
+    invoiceColumn,
+    taxColumn,
+  );
   const warnings: string[] = [];
   const technicalRows: ExcelRow[] = [];
   let totalTax = 0;
   let taxRowsAdded = 0;
+
+  if (groups.length === 0) {
+    throw new Error(
+      "Aucune facture valide n'a été trouvée : les lignes doivent contenir un numéro de facture.",
+    );
+  }
 
   for (const group of groups) {
     group.rows.forEach((row, index) => {
@@ -225,11 +240,12 @@ export function convertStarlinkToDexy(
       );
     }
 
-    if (group.invoiceNumber === "") {
-      warnings.push(
-        "Au moins une ligne n'a pas de numéro de facture ; elle a été regroupée sous une facture vide.",
-      );
-    }
+  }
+
+  if (skippedRowsWithoutInvoice > 0) {
+    warnings.push(
+      `${skippedRowsWithoutInvoice} ${skippedRowsWithoutInvoice > 1 ? "lignes sans numéro de facture ont été ignorées" : "ligne sans numéro de facture a été ignorée"} afin de ne pas créer de facture vide ni de ligne TAX en trop.`,
+    );
   }
 
   const outputRows = technicalRows.map((row) =>
@@ -256,11 +272,18 @@ function groupRowsByInvoice(
   rows: ExcelRow[],
   invoiceColumn: string,
   taxColumn: string,
-): InvoiceGroup[] {
+): InvoiceGroupingResult {
   const groupsByInvoice = new Map<string, InvoiceGroup>();
+  let skippedRowsWithoutInvoice = 0;
 
   for (const row of rows) {
     const invoiceNumber = normalizeInvoiceNumber(row[invoiceColumn]);
+
+    if (invoiceNumber === "") {
+      skippedRowsWithoutInvoice += 1;
+      continue;
+    }
+
     const existingGroup = groupsByInvoice.get(invoiceNumber);
     const group =
       existingGroup ??
@@ -275,7 +298,10 @@ function groupRowsByInvoice(
     groupsByInvoice.set(invoiceNumber, group);
   }
 
-  return Array.from(groupsByInvoice.values());
+  return {
+    groups: Array.from(groupsByInvoice.values()),
+    skippedRowsWithoutInvoice,
+  };
 }
 
 function createTaxRow(
