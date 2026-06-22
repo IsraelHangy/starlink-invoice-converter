@@ -3,7 +3,11 @@ import type { ConversionResult, ExcelCell, ExcelRow } from "../types";
 export const EXCISE_TAX_COLUMN =
   "Congo DRC Telecommunication Excise Tax_Final";
 export const DATE_FACTURE_COLUMN = "Date facture";
+export const COMMENT_A_COLUMN = "Commentaire A";
 export const COMMENT_B_COLUMN = "Commentaire B";
+export const COMMENT_C_COLUMN = "Commentaire C";
+export const COMMENT_D_COLUMN = "Commentaire D";
+export const COMMENT_E_COLUMN = "Commentaire E";
 export const OLD_DATE_COLUMN = "Old Date";
 
 const EXCISE_TAX_COLUMN_CANDIDATES = [
@@ -397,14 +401,19 @@ function createTraceableRow(
   const outputRow = stripColumn(row, taxColumn);
   const oldDate = row[dateColumn];
   const oldDateDisplay = formatDateForTrace(oldDate);
+  const oldMonthYearDisplay = formatMonthYearForTrace(oldDate);
   const resolvedInvoiceNumber =
     invoiceNumber || normalizeInvoiceNumber(row[invoiceColumn]);
 
   outputRow[dateColumn] = normalizationDate;
   outputRow[DATE_FACTURE_COLUMN] = normalizationDate;
   outputRow[OLD_DATE_COLUMN] = oldDateDisplay;
-  outputRow[COMMENT_B_COLUMN] =
-    `Original invoice : ${formatOriginalInvoiceReference(resolvedInvoiceNumber)} - ${oldDateDisplay}`;
+  outputRow[COMMENT_A_COLUMN] = "";
+  outputRow[COMMENT_B_COLUMN] = oldMonthYearDisplay;
+  outputRow[COMMENT_C_COLUMN] = "Original Invoice";
+  outputRow[COMMENT_D_COLUMN] = oldDateDisplay;
+  outputRow[COMMENT_E_COLUMN] =
+    formatOriginalInvoiceReference(resolvedInvoiceNumber);
   applyDefaultValuesToExistingColumns(outputRow);
 
   return outputRow;
@@ -469,7 +478,15 @@ function buildOutputColumns(
     }
   }
 
-  for (const column of [dateColumn, DATE_FACTURE_COLUMN, COMMENT_B_COLUMN]) {
+  for (const column of [
+    dateColumn,
+    DATE_FACTURE_COLUMN,
+    COMMENT_A_COLUMN,
+    COMMENT_B_COLUMN,
+    COMMENT_C_COLUMN,
+    COMMENT_D_COLUMN,
+    COMMENT_E_COLUMN,
+  ]) {
     if (!outputColumns.includes(column)) {
       outputColumns.push(column);
     }
@@ -635,6 +652,17 @@ function formatDateForTrace(value: ExcelCell): string {
   }
 
   return String(value).trim();
+}
+
+function formatMonthYearForTrace(value: ExcelCell): string {
+  const dateValue = parseDateValue(value);
+
+  if (!dateValue) {
+    return "";
+  }
+
+  const month = String(dateValue.getMonth() + 1).padStart(2, "0");
+  return `${month}-${dateValue.getFullYear()}`;
 }
 
 function parseDateValue(value: ExcelCell): Date | null {
