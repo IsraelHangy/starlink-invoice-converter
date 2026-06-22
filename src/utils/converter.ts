@@ -8,6 +8,9 @@ export const OLD_DATE_COLUMN = "Old Date";
 
 const EXCISE_TAX_COLUMN_CANDIDATES = [
   EXCISE_TAX_COLUMN,
+  "Excise Tax_Local",
+  "Excise Tax Local",
+  "excise_tax_local",
   "Congo DRC Telecommunication Excise Tax Final",
   "congo_drc_telecommunication_excise_tax_final",
   "telecommunication_excise_tax_final",
@@ -57,6 +60,16 @@ type InvoiceGroupingResult = {
 const LINE_NUMBER_FALLBACK_COLUMN = "N° ligne";
 
 const INVOICE_COLUMN_CANDIDATES = [
+  "Numéro Document",
+  "Numero Document",
+  "Numéro de Document",
+  "Numero de Document",
+  "Numéro Documents",
+  "Numero Documents",
+  "Numéro de Documents",
+  "Numero de Documents",
+  "Document Number",
+  "Document No",
   "Numéro de facture",
   "Numero de facture",
   "Numéro facture",
@@ -157,6 +170,43 @@ const TAX_LINE_VALUES = {
   unitPriceMode: "HT",
 } as const;
 
+const DEFAULT_EXISTING_COLUMN_VALUES: Array<{
+  candidates: string[];
+  value: string;
+}> = [
+  {
+    candidates: [
+      "Méthode de paiement",
+      "Methode de paiement",
+      "Mode de paiement",
+      "Mode paiement",
+      "Moyen de paiement",
+      "Payment Method",
+    ],
+    value: "VIREMENT",
+  },
+  {
+    candidates: [
+      "Opérateur [Code]",
+      "Operateur [Code]",
+      "Code opérateur",
+      "Code operateur",
+      "Operator Code",
+    ],
+    value: "C01",
+  },
+  {
+    candidates: [
+      "Opérateur [Nom]",
+      "Operateur [Nom]",
+      "Nom opérateur",
+      "Nom operateur",
+      "Operator Name",
+    ],
+    value: "C01_HB",
+  },
+];
+
 export function convertStarlinkToDexy(
   rows: ExcelRow[],
   sourceColumns?: string[],
@@ -171,7 +221,7 @@ export function convertStarlinkToDexy(
   const invoiceColumn = findColumn(columns, INVOICE_COLUMN_CANDIDATES);
   const missingColumns = [
     !invoiceColumn ? "Numéro facture" : null,
-    !taxColumn ? EXCISE_TAX_COLUMN : null,
+    !taxColumn ? `${EXCISE_TAX_COLUMN} ou Excise Tax_Local` : null,
   ].filter((column): column is string => Boolean(column));
 
   if (!taxColumn || !invoiceColumn) {
@@ -354,9 +404,36 @@ function createTraceableRow(
   outputRow[DATE_FACTURE_COLUMN] = normalizationDate;
   outputRow[OLD_DATE_COLUMN] = oldDateDisplay;
   outputRow[COMMENT_B_COLUMN] =
-    `Origine : ${resolvedInvoiceNumber} - ${oldDateDisplay}`;
+    `Original invoice : ${formatOriginalInvoiceReference(resolvedInvoiceNumber)} - ${oldDateDisplay}`;
+  applyDefaultValuesToExistingColumns(outputRow);
 
   return outputRow;
+}
+
+function applyDefaultValuesToExistingColumns(row: ExcelRow): void {
+  for (const { candidates, value } of DEFAULT_EXISTING_COLUMN_VALUES) {
+    const existingColumn = Object.keys(row).find((column) =>
+      candidates.some((candidate) => isSameColumn(column, candidate)),
+    );
+
+    if (existingColumn && isBlankValue(row[existingColumn])) {
+      row[existingColumn] = value;
+    }
+  }
+}
+
+function formatOriginalInvoiceReference(invoiceNumber: string): string {
+  const normalizedInvoiceNumber = invoiceNumber.trim();
+
+  if (normalizedInvoiceNumber === "") {
+    return "";
+  }
+
+  if (/^INV-DF-/i.test(normalizedInvoiceNumber)) {
+    return normalizedInvoiceNumber;
+  }
+
+  return `INV-DF-${normalizedInvoiceNumber}`;
 }
 
 function resolveDexyColumns(columns: string[]): Record<DexyFieldKey, string> {
@@ -443,12 +520,13 @@ function findExciseTaxColumn(columns: string[]): string | undefined {
     const words = normalizedColumn.split(" ").filter(Boolean);
     const hasExciseTax = words.includes("excise") && words.includes("tax");
     const hasFinal = words.includes("final");
+    const hasLocal = words.includes("local");
     const hasTelecomSignal =
       words.includes("telecommunication") ||
       words.includes("telecom") ||
       normalizedColumn.includes("congo drc");
 
-    return hasExciseTax && (hasFinal || hasTelecomSignal);
+    return hasExciseTax && (hasFinal || hasLocal || hasTelecomSignal);
   });
 
   if (looseMatches.length === 1) {
@@ -633,6 +711,14 @@ function toDateOnly(value: Date): Date {
 
 function roundCurrency(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function isSameColumn(left: unknown, right: unknown): boolean {
+  return normalizeHeader(String(left)) === normalizeHeader(String(right));
+}
+
+function isBlankValue(value: ExcelCell): boolean {
+  return value === null || value === undefined || value === "";
 }
 
 function stripColumn(row: ExcelRow, columnToRemove: string): ExcelRow {

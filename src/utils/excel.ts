@@ -24,6 +24,31 @@ const UNIT_PRICE_COLUMN = "Prix Unitaire";
 const ORIGINAL_PRICE_COLUMN = "Prix Hors remise";
 const B2F_EXCHANGE_RATE_DATE_COLUMN = "B2F Devise [Date cours]";
 const B2F_EXCHANGE_RATE_COLUMN = "B2F Devise [Taux de change]";
+const PAYMENT_METHOD_DEFAULT = "VIREMENT";
+const OPERATOR_CODE_DEFAULT = "C01";
+const OPERATOR_NAME_DEFAULT = "C01_HB";
+const PAYMENT_METHOD_COLUMN_CANDIDATES = [
+  "Méthode de paiement",
+  "Methode de paiement",
+  "Mode de paiement",
+  "Mode paiement",
+  "Moyen de paiement",
+  "Payment Method",
+];
+const OPERATOR_CODE_COLUMN_CANDIDATES = [
+  "Opérateur [Code]",
+  "Operateur [Code]",
+  "Code opérateur",
+  "Code operateur",
+  "Operator Code",
+];
+const OPERATOR_NAME_COLUMN_CANDIDATES = [
+  "Opérateur [Nom]",
+  "Operateur [Nom]",
+  "Nom opérateur",
+  "Nom operateur",
+  "Operator Name",
+];
 
 export async function readExcelFile(file: File): Promise<ImportedWorkbook> {
   const data = await file.arrayBuffer();
@@ -397,6 +422,27 @@ function getValueForTemplateColumn(
   }
 
   if (
+    isColumnCandidate(normalizedTemplateColumn, PAYMENT_METHOD_COLUMN_CANDIDATES) &&
+    isBlankValue(value)
+  ) {
+    return PAYMENT_METHOD_DEFAULT;
+  }
+
+  if (
+    isColumnCandidate(normalizedTemplateColumn, OPERATOR_CODE_COLUMN_CANDIDATES) &&
+    isBlankValue(value)
+  ) {
+    return OPERATOR_CODE_DEFAULT;
+  }
+
+  if (
+    isColumnCandidate(normalizedTemplateColumn, OPERATOR_NAME_COLUMN_CANDIDATES) &&
+    isBlankValue(value)
+  ) {
+    return OPERATOR_NAME_DEFAULT;
+  }
+
+  if (
     isSameColumn(normalizedTemplateColumn, ORIGINAL_PRICE_COLUMN) &&
     isBlankValue(value)
   ) {
@@ -699,13 +745,20 @@ function hasColumn(columns: string[], columnName: string): boolean {
   return columns.some((column) => isSameColumn(column, columnName));
 }
 
+function isColumnCandidate(columnName: string, candidates: string[]): boolean {
+  return candidates.some((candidate) => isSameColumn(columnName, candidate));
+}
+
 function isExciseTaxExportColumn(columnName: string): boolean {
   const normalizedColumn = normalizeHeader(columnName);
 
   return (
     isSameColumn(columnName, EXCISE_TAX_COLUMN) ||
+    isSameColumn(columnName, "Excise Tax_Local") ||
     (normalizedColumn.includes("congo drc telecommunication excise tax") &&
-      normalizedColumn.includes("final"))
+      normalizedColumn.includes("final")) ||
+    (normalizedColumn.includes("excise tax") &&
+      normalizedColumn.includes("local"))
   );
 }
 
@@ -765,8 +818,9 @@ function detectHeaderRowIndex(matrix: SheetMatrix): number {
     row.some((cell) => {
       const header = normalizeHeader(cell);
       return (
-        header.includes("congo drc telecommunication excise tax") &&
-        header.includes("final")
+        (header.includes("congo drc telecommunication excise tax") &&
+          header.includes("final")) ||
+        (header.includes("excise tax") && header.includes("local"))
       );
     }),
   );
