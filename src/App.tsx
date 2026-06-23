@@ -18,6 +18,15 @@ import {
 
 type PreviewMode = "before" | "after";
 
+const EXPORT_CURRENCY_COLUMN_CANDIDATES = [
+  "B2F Devise [Nom]",
+  "B2F Devise Nom",
+  "Devise Import",
+  "Currency",
+  "Transaction Currency",
+  "transaction_currency",
+];
+
 export default function App() {
   const [workbook, setWorkbook] = useState<ImportedWorkbook | null>(null);
   const [conversion, setConversion] = useState<ConversionResult | null>(null);
@@ -139,7 +148,7 @@ export default function App() {
       await exportExcelFile(
         conversion.rows,
         conversion.columns,
-        `Dexy_conforme_${formatExportDate(new Date())}.xlsx`,
+        buildDexyExportFileName(conversion.rows, new Date()),
       );
       setError(null);
     } catch (caughtError) {
@@ -424,6 +433,74 @@ function formatExportDate(value: Date): string {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const year = value.getFullYear();
   return `${day}-${month}-${year}`;
+}
+
+function buildDexyExportFileName(
+  rows: ConversionResult["rows"],
+  exportDate: Date,
+): string {
+  const currencies = collectExportCurrencies(rows);
+  const currencyLabel = currencies.length > 0 ? currencies.join("_") : "CDF";
+  return `Dexy_${currencyLabel}_${formatExportDate(exportDate)}.xlsx`;
+}
+
+function collectExportCurrencies(rows: ConversionResult["rows"]): string[] {
+  const currencies: string[] = [];
+
+  for (const row of rows) {
+    const currency = getRowCurrency(row);
+
+    if (currency && !currencies.includes(currency)) {
+      currencies.push(currency);
+    }
+  }
+
+  return currencies;
+}
+
+function getRowCurrency(row: ConversionResult["rows"][number]): string {
+  for (const candidate of EXPORT_CURRENCY_COLUMN_CANDIDATES) {
+    const column = Object.keys(row).find((rowColumn) =>
+      isSameExportColumn(rowColumn, candidate),
+    );
+    const value = column ? row[column] : null;
+    const currency = formatExportCurrency(value);
+
+    if (currency) {
+      return currency;
+    }
+  }
+
+  return "";
+}
+
+function formatExportCurrency(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function isSameExportColumn(left: unknown, right: unknown): boolean {
+  return normalizeExportColumn(left) === normalizeExportColumn(right);
+}
+
+function normalizeExportColumn(value: unknown): string {
+  return String(value)
+    .replace(/\u00a0/g, " ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u200b-\u200d\ufeff]/g, "")
+    .replace(/[°º]/g, "o")
+    .replace(/[\[\]()/|]+/g, " ")
+    .replace(/[_\s-]+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function PreviewToggle({

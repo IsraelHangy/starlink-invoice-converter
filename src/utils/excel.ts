@@ -22,6 +22,7 @@ const DEXY_TEMPLATE_SHEET = "LIGNES";
 const INVOICE_DATE_COLUMN = DATE_FACTURE_COLUMN;
 const UNIT_PRICE_COLUMN = "Prix Unitaire";
 const ORIGINAL_PRICE_COLUMN = "Prix Hors remise";
+const B2F_CURRENCY_NAME_COLUMN = "B2F Devise [Nom]";
 const B2F_EXCHANGE_RATE_DATE_COLUMN = "B2F Devise [Date cours]";
 const B2F_EXCHANGE_RATE_COLUMN = "B2F Devise [Taux de change]";
 const INVOICE_NUMBER_COLUMN_CANDIDATES = [
@@ -50,6 +51,14 @@ const SOURCE_DOCUMENT_NUMBER_COLUMN_CANDIDATES = [
   "Numero de Documents",
   "Document Number",
   "Document No",
+];
+const B2F_CURRENCY_COLUMN_CANDIDATES = [
+  B2F_CURRENCY_NAME_COLUMN,
+  "B2F Devise Nom",
+  "Devise Import",
+  "Currency",
+  "Transaction Currency",
+  "transaction_currency",
 ];
 const PAYMENT_METHOD_DEFAULT = "VIREMENT";
 const OPERATOR_CODE_DEFAULT = "ADM";
@@ -429,10 +438,6 @@ function getValueForTemplateColumn(
   const normalizedTemplateColumn = normalizeHeader(templateColumn);
   const comparableTemplateColumn = normalizeComparableHeader(templateColumn);
 
-  if (isSameColumn(normalizedTemplateColumn, B2F_EXCHANGE_RATE_COLUMN)) {
-    return 1;
-  }
-
   const value = getMappedValueForTemplateColumn(
     row,
     templateColumn,
@@ -441,11 +446,14 @@ function getValueForTemplateColumn(
     rowColumnLookup,
   );
 
+  if (isSameColumn(normalizedTemplateColumn, B2F_EXCHANGE_RATE_COLUMN)) {
+    return getB2fExchangeRateValue(row, value, rowColumnLookup);
+  }
+
   if (
-    isSameColumn(normalizedTemplateColumn, B2F_EXCHANGE_RATE_DATE_COLUMN) &&
-    isBlankValue(value)
+    isSameColumn(normalizedTemplateColumn, B2F_EXCHANGE_RATE_DATE_COLUMN)
   ) {
-    return getMappedValueForKnownColumn(row, INVOICE_DATE_COLUMN, rowColumnLookup);
+    return getB2fExchangeRateDateValue(row, value, rowColumnLookup);
   }
 
   if (
@@ -488,6 +496,56 @@ function getValueForTemplateColumn(
   }
 
   return value;
+}
+
+function getB2fExchangeRateValue(
+  row: ExcelRow,
+  value: ExcelCell,
+  rowColumnLookup: Map<string, string>,
+): ExcelCell {
+  if (isForeignCurrencyRow(row, rowColumnLookup)) {
+    return isBlankValue(value) ? null : value;
+  }
+
+  return 1;
+}
+
+function getB2fExchangeRateDateValue(
+  row: ExcelRow,
+  value: ExcelCell,
+  rowColumnLookup: Map<string, string>,
+): ExcelCell {
+  if (isForeignCurrencyRow(row, rowColumnLookup)) {
+    return isBlankValue(value) ? null : value;
+  }
+
+  if (isBlankValue(value)) {
+    return getMappedValueForKnownColumn(row, INVOICE_DATE_COLUMN, rowColumnLookup);
+  }
+
+  return value;
+}
+
+function isForeignCurrencyRow(
+  row: ExcelRow,
+  rowColumnLookup: Map<string, string>,
+): boolean {
+  const currency = getMappedValueForKnownColumns(
+    row,
+    B2F_CURRENCY_COLUMN_CANDIDATES,
+    rowColumnLookup,
+  );
+  const currencyCode = formatCurrencyCode(currency);
+
+  return currencyCode !== "" && currencyCode !== "CDF";
+}
+
+function formatCurrencyCode(value: ExcelCell): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value).trim().toUpperCase();
 }
 
 function getMappedValueForTemplateColumn(

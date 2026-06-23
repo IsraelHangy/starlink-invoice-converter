@@ -36,6 +36,24 @@ const DATE_FACTURE_COLUMN_CANDIDATES = [
   "Billing Date",
 ];
 
+const TYPOLOGY_COLUMN_CANDIDATES = [
+  "Typologie client",
+  "Typologie Client",
+  "Client typology",
+  "Customer typology",
+  "account_type",
+];
+
+const NIF_CLIENT_COLUMN_CANDIDATES = [
+  "NIF Client",
+  "NIF client",
+  "NIF",
+  "Numéro fiscal client",
+  "Numero fiscal client",
+  "Tax ID",
+  "Customer Tax ID",
+];
+
 type ConversionOptions = {
   normalizationDate?: Date;
 };
@@ -410,11 +428,12 @@ function createTraceableRow(
   outputRow[OLD_DATE_COLUMN] = oldDateDisplay;
   outputRow[COMMENT_A_COLUMN] = "";
   outputRow[COMMENT_B_COLUMN] = oldMonthYearDisplay;
-  outputRow[COMMENT_C_COLUMN] = "Original Invoice";
+  outputRow[COMMENT_C_COLUMN] = "Original Invoice :";
   outputRow[COMMENT_D_COLUMN] = oldDateDisplay;
   outputRow[COMMENT_E_COLUMN] =
     formatOriginalInvoiceReference(resolvedInvoiceNumber);
   applyDefaultValuesToExistingColumns(outputRow);
+  applyNifRuleByClientTypology(outputRow);
 
   return outputRow;
 }
@@ -443,6 +462,47 @@ function formatOriginalInvoiceReference(invoiceNumber: string): string {
   }
 
   return `INV-DF-${normalizedInvoiceNumber}`;
+}
+
+function applyNifRuleByClientTypology(row: ExcelRow): void {
+  const typologyColumn = findExistingRowColumn(row, TYPOLOGY_COLUMN_CANDIDATES);
+
+  if (!typologyColumn) {
+    return;
+  }
+
+  const typology = formatCellAsText(row[typologyColumn]).toUpperCase();
+
+  if (typology !== "PP") {
+    return;
+  }
+
+  for (const nifColumn of findExistingRowColumns(row, NIF_CLIENT_COLUMN_CANDIDATES)) {
+    row[nifColumn] = "";
+  }
+}
+
+function findExistingRowColumn(
+  row: ExcelRow,
+  candidates: string[],
+): string | undefined {
+  return Object.keys(row).find((column) =>
+    candidates.some((candidate) => isSameColumn(column, candidate)),
+  );
+}
+
+function findExistingRowColumns(row: ExcelRow, candidates: string[]): string[] {
+  return Object.keys(row).filter((column) =>
+    candidates.some((candidate) => isSameColumn(column, candidate)),
+  );
+}
+
+function formatCellAsText(value: ExcelCell): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value).trim();
 }
 
 function resolveDexyColumns(columns: string[]): Record<DexyFieldKey, string> {
@@ -666,18 +726,18 @@ function formatMonthYearForTrace(value: ExcelCell): string {
 }
 
 const FRENCH_TRACE_MONTHS = [
-  "janvier",
-  "février",
-  "mars",
-  "avril",
-  "mai",
-  "juin",
-  "juillet",
-  "août",
-  "septembre",
-  "octobre",
-  "novembre",
-  "décembre",
+  "Janvier",
+  "Février",
+  "Mars",
+  "Avril",
+  "Mai",
+  "Juin",
+  "Juillet",
+  "Août",
+  "Septembre",
+  "Octobre",
+  "Novembre",
+  "Décembre",
 ] as const;
 
 function parseDateValue(value: ExcelCell): Date | null {
