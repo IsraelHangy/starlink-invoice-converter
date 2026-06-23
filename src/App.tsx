@@ -440,7 +440,8 @@ function buildDexyExportFileName(
   exportDate: Date,
 ): string {
   const currencies = collectExportCurrencies(rows);
-  const currencyLabel = currencies.length > 0 ? currencies.join("_") : "CDF";
+  const currencyLabel =
+    currencies.length > 1 ? "Multi_Devises" : currencies[0] ?? "CDF";
   return `Dexy_${currencyLabel}_${formatExportDate(exportDate)}.xlsx`;
 }
 
