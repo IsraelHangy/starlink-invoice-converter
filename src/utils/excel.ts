@@ -52,8 +52,8 @@ const SOURCE_DOCUMENT_NUMBER_COLUMN_CANDIDATES = [
   "Document No",
 ];
 const PAYMENT_METHOD_DEFAULT = "VIREMENT";
-const OPERATOR_CODE_DEFAULT = "C01";
-const OPERATOR_NAME_DEFAULT = "C01_HB";
+const OPERATOR_CODE_DEFAULT = "ADM";
+const OPERATOR_NAME_DEFAULT = "Administrateur";
 const PAYMENT_METHOD_COLUMN_CANDIDATES = [
   "Méthode de paiement",
   "Methode de paiement",

@@ -197,7 +197,7 @@ const DEFAULT_EXISTING_COLUMN_VALUES: Array<{
       "Code operateur",
       "Operator Code",
     ],
-    value: "C01",
+    value: "ADM",
   },
   {
     candidates: [
@@ -207,7 +207,7 @@ const DEFAULT_EXISTING_COLUMN_VALUES: Array<{
       "Nom operateur",
       "Operator Name",
     ],
-    value: "C01_HB",
+    value: "Administrateur",
   },
 ];
 
@@ -661,9 +661,24 @@ function formatMonthYearForTrace(value: ExcelCell): string {
     return "";
   }
 
-  const month = String(dateValue.getMonth() + 1).padStart(2, "0");
+  const month = FRENCH_TRACE_MONTHS[dateValue.getMonth()];
   return `${month}-${dateValue.getFullYear()}`;
 }
+
+const FRENCH_TRACE_MONTHS = [
+  "janvier",
+  "février",
+  "mars",
+  "avril",
+  "mai",
+  "juin",
+  "juillet",
+  "août",
+  "septembre",
+  "octobre",
+  "novembre",
+  "décembre",
+] as const;
 
 function parseDateValue(value: ExcelCell): Date | null {
   if (value instanceof Date) {
