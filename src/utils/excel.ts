@@ -24,6 +24,33 @@ const UNIT_PRICE_COLUMN = "Prix Unitaire";
 const ORIGINAL_PRICE_COLUMN = "Prix Hors remise";
 const B2F_EXCHANGE_RATE_DATE_COLUMN = "B2F Devise [Date cours]";
 const B2F_EXCHANGE_RATE_COLUMN = "B2F Devise [Taux de change]";
+const INVOICE_NUMBER_COLUMN_CANDIDATES = [
+  "Numéro facture",
+  "Numero facture",
+  "Numéro de facture",
+  "Numero de facture",
+  "N° facture",
+  "N° de facture",
+  "No facture",
+  "Nº facture",
+  "Facture",
+  "Invoice Number",
+  "Invoice No",
+  "Invoice",
+  "Billing Invoice",
+];
+const SOURCE_DOCUMENT_NUMBER_COLUMN_CANDIDATES = [
+  "Numéro Document",
+  "Numero Document",
+  "Numéro de Document",
+  "Numero de Document",
+  "Numéro Documents",
+  "Numero Documents",
+  "Numéro de Documents",
+  "Numero de Documents",
+  "Document Number",
+  "Document No",
+];
 const PAYMENT_METHOD_DEFAULT = "VIREMENT";
 const OPERATOR_CODE_DEFAULT = "C01";
 const OPERATOR_NAME_DEFAULT = "C01_HB";
@@ -422,6 +449,17 @@ function getValueForTemplateColumn(
   }
 
   if (
+    isColumnCandidate(normalizedTemplateColumn, INVOICE_NUMBER_COLUMN_CANDIDATES) &&
+    isBlankValue(value)
+  ) {
+    return getMappedValueForKnownColumns(
+      row,
+      SOURCE_DOCUMENT_NUMBER_COLUMN_CANDIDATES,
+      rowColumnLookup,
+    );
+  }
+
+  if (
     isColumnCandidate(normalizedTemplateColumn, PAYMENT_METHOD_COLUMN_CANDIDATES) &&
     isBlankValue(value)
   ) {
@@ -486,6 +524,22 @@ function getMappedValueForKnownColumn(
     findLooseRowColumn(comparableColumn, rowColumnLookup);
 
   return rowColumn ? row[rowColumn] : null;
+}
+
+function getMappedValueForKnownColumns(
+  row: ExcelRow,
+  columnNames: string[],
+  rowColumnLookup: Map<string, string>,
+): ExcelCell {
+  for (const columnName of columnNames) {
+    const value = getMappedValueForKnownColumn(row, columnName, rowColumnLookup);
+
+    if (!isBlankValue(value)) {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 function findLooseRowColumn(
