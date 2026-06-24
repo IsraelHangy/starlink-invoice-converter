@@ -7,6 +7,11 @@
   PNPM_VERSION = "10.15.0"
 
 [[redirects]]
+  from = "/api/bcc-rate"
+  to = "/.netlify/functions/bcc-rate"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

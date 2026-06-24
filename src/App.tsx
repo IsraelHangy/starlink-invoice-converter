@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   ArrowRightLeft,
+  DollarSign,
   Download,
   Loader2,
   Play,
+  X,
 } from "lucide-react";
 import UploadCard from "./components/UploadCard";
 import PreviewTable from "./components/PreviewTable";
@@ -13,6 +15,7 @@ import type { ConversionResult, ImportedWorkbook } from "./types";
 import { exportExcelFile } from "./utils/excel";
 import {
   convertStarlinkToDexyInWorker,
+  type ExchangeRateUpdateRequest,
   readExcelFileInWorker,
 } from "./utils/processingWorkerClient";
 
@@ -27,6 +30,8 @@ const EXPORT_CURRENCY_COLUMN_CANDIDATES = [
   "transaction_currency",
 ];
 
+const BCC_USD_RATE_CACHE_KEY = "dexy_converter_last_bcc_usd_rate";
+
 export default function App() {
   const [workbook, setWorkbook] = useState<ImportedWorkbook | null>(null);
   const [conversion, setConversion] = useState<ConversionResult | null>(null);
@@ -37,6 +42,14 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [readingFileSize, setReadingFileSize] = useState<number | null>(null);
   const [showProcessingStatus, setShowProcessingStatus] = useState(false);
+  const [exchangeRatePromptOpen, setExchangeRatePromptOpen] = useState(false);
+  const [dgiRateInput, setDgiRateInput] = useState("");
+  const [dgiRateError, setDgiRateError] = useState<string | null>(null);
+  const [dgiRateMeta, setDgiRateMeta] = useState<string | null>(null);
+  const [dgiRatePlaceholder, setDgiRatePlaceholder] = useState(
+    "En attente du taux BCC du jour",
+  );
+  const [isFetchingDgiRate, setIsFetchingDgiRate] = useState(false);
 
   const canConvert =
     Boolean(workbook?.rows.length) &&
@@ -111,6 +124,28 @@ export default function App() {
       return;
     }
 
+    if (hasUsdRows(workbook.rows)) {
+      setDgiRateInput("");
+      setDgiRateError(null);
+      setDgiRateMeta(null);
+      setDgiRatePlaceholder(getCachedBccRatePlaceholder());
+      setExchangeRatePromptOpen(true);
+      setError(null);
+      void loadBccUsdRate();
+      return;
+    }
+
+    await runConversion();
+  };
+
+  const runConversion = async (
+    exchangeRateUpdate?: ExchangeRateUpdateRequest,
+  ) => {
+    if (!workbook) {
+      setError("Importez d'abord un fichier Excel Starlink.");
+      return;
+    }
+
     setIsConverting(true);
     setError(null);
 
@@ -119,6 +154,7 @@ export default function App() {
         workbook.rows,
         workbook.columns,
         workbook.uploadedAt,
+        exchangeRateUpdate,
       );
       setConversion(convertedWorkbook);
       setPreviewMode("after");
@@ -134,6 +170,52 @@ export default function App() {
     } finally {
       setIsConverting(false);
     }
+  };
+
+  const handleKeepTemplateRates = () => {
+    setExchangeRatePromptOpen(false);
+    setDgiRateError(null);
+    void runConversion();
+  };
+
+  const loadBccUsdRate = async () => {
+    setIsFetchingDgiRate(true);
+
+    try {
+      const bccRate = await fetchBccUsdRate();
+      setDgiRateInput(formatRateInput(bccRate.rate));
+      setDgiRatePlaceholder("Taux BCC du jour");
+      setDgiRateMeta(
+        bccRate.publishedAt
+          ? `Taux BCC : ${formatRateInput(bccRate.rate)} - ${bccRate.publishedAt}`
+          : `Taux BCC : ${formatRateInput(bccRate.rate)}`,
+      );
+      cacheBccRate(bccRate);
+      setDgiRateError(null);
+    } catch {
+      setDgiRateMeta(
+        "Taux BCC indisponible automatiquement. Vous pouvez le renseigner manuellement.",
+      );
+    } finally {
+      setIsFetchingDgiRate(false);
+    }
+  };
+
+  const handleApplyDgiRate = () => {
+    const rate = parseRateInput(dgiRateInput);
+
+    if (rate === null || rate <= 0) {
+      setDgiRateError("Renseignez un taux DGI valide avant de continuer.");
+      return;
+    }
+
+    setExchangeRatePromptOpen(false);
+    setDgiRateError(null);
+    void runConversion({
+      currency: "USD",
+      rate,
+      rateDate: new Date(),
+    });
   };
 
   const handleExport = async () => {
@@ -275,6 +357,26 @@ export default function App() {
           emptyMessage={preview.emptyMessage}
         />
       </div>
+
+      {exchangeRatePromptOpen ? (
+        <ExchangeRatePrompt
+          detectedInvoices={countInvoicesByCurrency(workbook?.rows ?? [], "USD")}
+          error={dgiRateError}
+          hasCdfRows={hasCdfRows(workbook?.rows ?? [])}
+          isFetchingRate={isFetchingDgiRate}
+          isRateValid={isValidRateInput(dgiRateInput)}
+          ratePlaceholder={dgiRatePlaceholder}
+          rateInput={dgiRateInput}
+          rateMeta={dgiRateMeta}
+          onApply={handleApplyDgiRate}
+          onCancel={() => setExchangeRatePromptOpen(false)}
+          onKeepTemplate={handleKeepTemplateRates}
+          onRateInputChange={(value) => {
+            setDgiRateInput(value);
+            setDgiRateError(null);
+          }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -332,6 +434,136 @@ function ValidationErrorAlert({ message }: { message: string }) {
           {message}
         </p>
       </div>
+    </div>
+  );
+}
+
+interface ExchangeRatePromptProps {
+  detectedInvoices: number;
+  error: string | null;
+  hasCdfRows: boolean;
+  isFetchingRate: boolean;
+  isRateValid: boolean;
+  ratePlaceholder: string;
+  rateInput: string;
+  rateMeta: string | null;
+  onApply: () => void;
+  onCancel: () => void;
+  onKeepTemplate: () => void;
+  onRateInputChange: (value: string) => void;
+}
+
+function ExchangeRatePrompt({
+  detectedInvoices,
+  error,
+  hasCdfRows,
+  isFetchingRate,
+  isRateValid,
+  ratePlaceholder,
+  rateInput,
+  rateMeta,
+  onApply,
+  onCancel,
+  onKeepTemplate,
+  onRateInputChange,
+}: ExchangeRatePromptProps) {
+  const todayLabel = formatExportDate(new Date());
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 px-3 py-4 sm:items-center">
+      <section
+        aria-modal="true"
+        className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl"
+        role="dialog"
+      >
+        <header className="border-b border-[#746bff] px-5 py-4 sm:px-6">
+          <div className="flex items-start gap-4">
+            <button
+              aria-label="Fermer"
+              className="flex h-12 w-12 flex-none items-center justify-center rounded-full bg-[#f0efff] text-ink transition hover:bg-[#e2dfff]"
+              type="button"
+              onClick={onCancel}
+            >
+              <X aria-hidden="true" size={22} />
+            </button>
+            <div className="min-w-0 border-l-2 border-[#5f55d6] pl-4">
+              <h2 className="text-lg font-bold text-ink">
+                Mise à jour des taux de change
+              </h2>
+              <p className="mt-1 text-sm font-medium text-slate-400">
+                Demande de confirmation
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <div className="px-5 py-6 sm:px-6 sm:py-8">
+          <p className="text-base leading-7 text-slate-700 sm:text-lg">
+            Voulez-vous mettre à jour les taux de change des factures USD avec
+            le taux DGI du jour ?
+          </p>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
+            <div className="inline-flex items-center gap-2 rounded-lg bg-[#ede9ff] px-4 py-3 text-sm font-bold text-[#5f55d6]">
+              <DollarSign aria-hidden="true" size={18} />
+              {detectedInvoices} facture{detectedInvoices > 1 ? "s" : ""} USD
+            </div>
+            <div className="rounded-lg bg-[#fff4e5] px-4 py-3 text-sm font-semibold text-[#9a4a00]">
+              {isFetchingRate
+                ? "Récupération du taux BCC en cours..."
+                : `Date cours appliquée : ${todayLabel}`}
+            </div>
+          </div>
+
+          <label className="mt-6 block text-sm font-semibold text-slate-700">
+            Taux DGI USD vers CDF
+            <input
+              className="mt-2 h-12 w-full rounded-lg border border-slate-300 px-4 text-base font-semibold text-ink outline-none transition focus:border-[#5f55d6] focus:ring-4 focus:ring-[#5f55d6]/15"
+              inputMode="decimal"
+              placeholder={ratePlaceholder}
+              type="text"
+              value={rateInput}
+              onChange={(event) => onRateInputChange(event.target.value)}
+            />
+          </label>
+
+          {rateMeta ? (
+            <p className="mt-3 rounded-lg bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-600">
+              {rateMeta}
+            </p>
+          ) : null}
+
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            {hasCdfRows
+              ? "Si vous choisissez Oui, seules les lignes USD seront mises à jour. Les lignes CDF gardent le taux 1."
+              : "Si vous choisissez Oui, seules les lignes USD seront mises à jour."}
+          </p>
+
+          {error ? (
+            <p className="mt-3 rounded-lg border border-[#8f2146] bg-[#210922] px-4 py-3 text-sm font-semibold text-[#ffb0bf]">
+              {error}
+            </p>
+          ) : null}
+        </div>
+
+        <footer className="flex flex-col gap-3 border-t border-[#746bff] px-5 py-4 sm:flex-row sm:px-6">
+          <button
+            className="inline-flex h-11 flex-1 items-center justify-center rounded-lg border border-slate-300 bg-white px-5 text-sm font-bold text-ink transition hover:bg-slate-50"
+            type="button"
+            onClick={onKeepTemplate}
+          >
+            NON
+          </button>
+          <button
+            className="inline-flex h-11 flex-1 items-center justify-center rounded-lg bg-[#5f55d6] px-5 text-sm font-bold text-white transition hover:bg-[#5147c4] disabled:cursor-not-allowed disabled:bg-slate-400"
+            type="button"
+            disabled={isFetchingRate || !isRateValid}
+            onClick={onApply}
+          >
+            {isFetchingRate ? "Chargement..." : "OUI"}
+          </button>
+        </footer>
+      </section>
     </div>
   );
 }
@@ -426,6 +658,200 @@ function getFileVolumeLabel(fileSize: number | null): string | null {
   }
 
   return "petit fichier";
+}
+
+function hasUsdRows(rows: ConversionResult["rows"]): boolean {
+  return rows.some((row) => getRowCurrency(row) === "USD");
+}
+
+function hasCdfRows(rows: ConversionResult["rows"]): boolean {
+  return rows.some((row) => getRowCurrency(row) === "CDF");
+}
+
+function countInvoicesByCurrency(
+  rows: ConversionResult["rows"],
+  currency: string,
+): number {
+  const invoices = new Set<string>();
+  const normalizedCurrency = currency.toUpperCase();
+
+  for (const row of rows) {
+    if (getRowCurrency(row) !== normalizedCurrency) {
+      continue;
+    }
+
+    const invoiceNumber =
+      getRowValue(row, "Numéro Document") ??
+      getRowValue(row, "Numero Document") ??
+      getRowValue(row, "Numéro facture") ??
+      getRowValue(row, "Numero facture");
+
+    if (invoiceNumber !== null && invoiceNumber !== undefined && invoiceNumber !== "") {
+      invoices.add(String(invoiceNumber));
+    }
+  }
+
+  return invoices.size;
+}
+
+function getRowValue(
+  row: ConversionResult["rows"][number],
+  candidate: string,
+): unknown {
+  const column = Object.keys(row).find((rowColumn) =>
+    isSameExportColumn(rowColumn, candidate),
+  );
+
+  return column ? row[column] : null;
+}
+
+function parseRateInput(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalizedValue = value
+    .replace(/\s/g, "")
+    .replace(/[A-Za-z$€CDF]+/g, "")
+    .replace(/^\((.*)\)$/, "-$1");
+  const lastCommaIndex = normalizedValue.lastIndexOf(",");
+  const lastDotIndex = normalizedValue.lastIndexOf(".");
+  let decimalValue = normalizedValue;
+
+  if (lastCommaIndex > -1 && lastDotIndex > -1) {
+    decimalValue =
+      lastCommaIndex > lastDotIndex
+        ? normalizedValue.replace(/\./g, "").replace(",", ".")
+        : normalizedValue.replace(/,/g, "");
+  } else if (lastCommaIndex > -1) {
+    decimalValue = normalizedValue.replace(",", ".");
+  }
+
+  const parsedValue = Number.parseFloat(decimalValue);
+  return Number.isFinite(parsedValue) ? parsedValue : null;
+}
+
+function formatRateInput(value: number | null): string {
+  if (value === null) {
+    return "";
+  }
+
+  return String(value).replace(".", ",");
+}
+
+function isValidRateInput(value: unknown): boolean {
+  const rate = parseRateInput(value);
+  return rate !== null && rate > 0;
+}
+
+type BccUsdRate = {
+  currency: "USD";
+  rate: number;
+  publishedAt: string | null;
+  sourceUrl: string;
+};
+
+type CachedBccRate = {
+  rate: number;
+  savedAt: string;
+  publishedAt: string | null;
+};
+
+function getCachedBccRatePlaceholder(): string {
+  const cachedRate = readCachedBccRate();
+
+  if (!cachedRate) {
+    return "En attente du taux BCC du jour";
+  }
+
+  const savedDate = formatCachedRateDate(cachedRate.savedAt);
+  const dateSuffix = savedDate ? ` (${savedDate})` : "";
+  return `Dernier taux BCC connu${dateSuffix} : ${formatRateInput(cachedRate.rate)}`;
+}
+
+function readCachedBccRate(): CachedBccRate | null {
+  try {
+    const rawValue = window.localStorage.getItem(BCC_USD_RATE_CACHE_KEY);
+
+    if (!rawValue) {
+      return null;
+    }
+
+    const parsedValue = JSON.parse(rawValue) as Partial<CachedBccRate>;
+
+    if (
+      typeof parsedValue.rate !== "number" ||
+      !Number.isFinite(parsedValue.rate) ||
+      typeof parsedValue.savedAt !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      rate: parsedValue.rate,
+      savedAt: parsedValue.savedAt,
+      publishedAt: parsedValue.publishedAt ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function cacheBccRate(rate: BccUsdRate): void {
+  try {
+    const cachedRate: CachedBccRate = {
+      rate: rate.rate,
+      savedAt: new Date().toISOString(),
+      publishedAt: rate.publishedAt,
+    };
+    window.localStorage.setItem(
+      BCC_USD_RATE_CACHE_KEY,
+      JSON.stringify(cachedRate),
+    );
+  } catch {
+    // Le cache est seulement un confort visuel : la conversion ne depend pas de lui.
+  }
+}
+
+function formatCachedRateDate(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return formatExportDate(date);
+}
+
+async function fetchBccUsdRate(): Promise<BccUsdRate> {
+  const response = await fetch("/api/bcc-rate", {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error("Taux BCC indisponible.");
+  }
+
+  const payload = (await response.json()) as Partial<BccUsdRate>;
+
+  if (
+    payload.currency !== "USD" ||
+    typeof payload.rate !== "number" ||
+    !Number.isFinite(payload.rate)
+  ) {
+    throw new Error("Réponse BCC invalide.");
+  }
+
+  return {
+    currency: "USD",
+    rate: payload.rate,
+    publishedAt: payload.publishedAt ?? null,
+    sourceUrl: payload.sourceUrl ?? "",
+  };
 }
 
 function formatExportDate(value: Date): string {

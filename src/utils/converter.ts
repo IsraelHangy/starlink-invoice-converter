@@ -54,8 +54,35 @@ const NIF_CLIENT_COLUMN_CANDIDATES = [
   "Customer Tax ID",
 ];
 
+const B2F_CURRENCY_COLUMN_CANDIDATES = [
+  "B2F Devise [Nom]",
+  "B2F Devise Nom",
+  "Devise Import",
+  "Currency",
+  "Transaction Currency",
+  "transaction_currency",
+];
+
+const B2F_EXCHANGE_RATE_DATE_COLUMN_CANDIDATES = [
+  "B2F Devise [Date cours]",
+  "B2F Devise Date cours",
+];
+
+const B2F_EXCHANGE_RATE_COLUMN_CANDIDATES = [
+  "B2F Devise [Taux de change]",
+  "B2F Devise Taux de change",
+];
+
+const IMPORT_CURRENCY_COLUMN = "Devise Import";
+const IMPORT_EXCHANGE_RATE_COLUMN = "Taux Devise Import vers CDF";
+
 type ConversionOptions = {
   normalizationDate?: Date;
+  exchangeRateUpdate?: {
+    currency: string;
+    rate: number;
+    rateDate: Date;
+  };
 };
 
 type DexyFieldKey =
@@ -289,6 +316,7 @@ export function convertStarlinkToDexy(
         dateColumn,
         group.invoiceNumber,
         normalizationDate,
+        options.exchangeRateUpdate,
       );
       outputRow[dexyColumns.lineNumber] = index + 1;
       technicalRows.push(outputRow);
@@ -307,6 +335,7 @@ export function convertStarlinkToDexy(
           dateColumn,
           dexyColumns,
           normalizationDate,
+          options.exchangeRateUpdate,
           group.rows.length + 1,
         ),
       );
@@ -383,6 +412,7 @@ function createTaxRow(
   dateColumn: string,
   dexyColumns: Record<DexyFieldKey, string>,
   normalizationDate: Date,
+  exchangeRateUpdate: ConversionOptions["exchangeRateUpdate"],
   lineNumber: number,
 ): ExcelRow {
   const baseRow = createTraceableRow(
@@ -392,6 +422,7 @@ function createTaxRow(
     dateColumn,
     group.invoiceNumber,
     normalizationDate,
+    exchangeRateUpdate,
   );
   const taxTotal = roundCurrency(group.taxTotal);
 
@@ -415,6 +446,7 @@ function createTraceableRow(
   dateColumn: string,
   invoiceNumber: string,
   normalizationDate: Date,
+  exchangeRateUpdate?: ConversionOptions["exchangeRateUpdate"],
 ): ExcelRow {
   const outputRow = stripColumn(row, taxColumn);
   const oldDate = row[dateColumn];
@@ -434,6 +466,7 @@ function createTraceableRow(
     formatOriginalInvoiceReference(resolvedInvoiceNumber);
   applyDefaultValuesToExistingColumns(outputRow);
   applyNifRuleByClientTypology(outputRow);
+  applyExchangeRateUpdate(outputRow, exchangeRateUpdate);
 
   return outputRow;
 }
@@ -503,6 +536,61 @@ function formatCellAsText(value: ExcelCell): string {
   }
 
   return String(value).trim();
+}
+
+function applyExchangeRateUpdate(
+  row: ExcelRow,
+  exchangeRateUpdate?: ConversionOptions["exchangeRateUpdate"],
+): void {
+  const currency = getRowCurrencyCode(row);
+
+  if (currency === "CDF") {
+    setRowValue(row, IMPORT_CURRENCY_COLUMN, "CDF");
+    setRowValue(row, IMPORT_EXCHANGE_RATE_COLUMN, 1);
+    setCandidateRowValue(row, B2F_EXCHANGE_RATE_COLUMN_CANDIDATES, 1);
+    return;
+  }
+
+  if (!exchangeRateUpdate || currency !== exchangeRateUpdate.currency) {
+    return;
+  }
+
+  setCandidateRowValue(row, B2F_EXCHANGE_RATE_DATE_COLUMN_CANDIDATES, exchangeRateUpdate.rateDate);
+  setCandidateRowValue(row, B2F_EXCHANGE_RATE_COLUMN_CANDIDATES, exchangeRateUpdate.rate);
+  setRowValue(row, IMPORT_CURRENCY_COLUMN, exchangeRateUpdate.currency);
+  setRowValue(row, IMPORT_EXCHANGE_RATE_COLUMN, exchangeRateUpdate.rate);
+}
+
+function getRowCurrencyCode(row: ExcelRow): string {
+  for (const candidate of B2F_CURRENCY_COLUMN_CANDIDATES) {
+    const column = findExistingRowColumn(row, [candidate]);
+
+    if (!column) {
+      continue;
+    }
+
+    const currency = formatCellAsText(row[column]).toUpperCase();
+
+    if (currency) {
+      return currency;
+    }
+  }
+
+  return "";
+}
+
+function setCandidateRowValue(
+  row: ExcelRow,
+  candidates: string[],
+  value: ExcelCell,
+): void {
+  const column = findExistingRowColumn(row, candidates) ?? candidates[0];
+  row[column] = value;
+}
+
+function setRowValue(row: ExcelRow, column: string, value: ExcelCell): void {
+  const existingColumn = findExistingRowColumn(row, [column]) ?? column;
+  row[existingColumn] = value;
 }
 
 function resolveDexyColumns(columns: string[]): Record<DexyFieldKey, string> {

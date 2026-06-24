@@ -14,6 +14,11 @@ type ConvertWorkbookRequest = {
   rows: ExcelRow[];
   columns: string[];
   normalizationDate: Date;
+  exchangeRateUpdate?: {
+    currency: string;
+    rate: number;
+    rateDate: Date;
+  };
 };
 
 type WorkerRequest = ReadWorkbookRequest | ConvertWorkbookRequest;
@@ -56,6 +61,7 @@ async function handleMessage(message: WorkerRequest): Promise<void> {
 
     const conversion = convertStarlinkToDexy(message.rows, message.columns, {
       normalizationDate: message.normalizationDate,
+      exchangeRateUpdate: message.exchangeRateUpdate,
     });
 
     postResponse({
