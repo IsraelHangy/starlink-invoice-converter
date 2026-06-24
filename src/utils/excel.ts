@@ -25,6 +25,8 @@ const ORIGINAL_PRICE_COLUMN = "Prix Hors remise";
 const B2F_CURRENCY_NAME_COLUMN = "B2F Devise [Nom]";
 const B2F_EXCHANGE_RATE_DATE_COLUMN = "B2F Devise [Date cours]";
 const B2F_EXCHANGE_RATE_COLUMN = "B2F Devise [Taux de change]";
+const IMPORT_CURRENCY_COLUMN = "Devise Import";
+const IMPORT_EXCHANGE_RATE_COLUMN = "Taux Devise Import vers CDF";
 const INVOICE_NUMBER_COLUMN_CANDIDATES = [
   "Numéro facture",
   "Numero facture",
@@ -450,6 +452,14 @@ function getValueForTemplateColumn(
     return getB2fExchangeRateValue(row, value, rowColumnLookup);
   }
 
+  if (isSameColumn(normalizedTemplateColumn, IMPORT_CURRENCY_COLUMN)) {
+    return getImportCurrencyValue(row, value, rowColumnLookup);
+  }
+
+  if (isSameColumn(normalizedTemplateColumn, IMPORT_EXCHANGE_RATE_COLUMN)) {
+    return getImportExchangeRateValue(row, value, rowColumnLookup);
+  }
+
   if (
     isSameColumn(normalizedTemplateColumn, B2F_EXCHANGE_RATE_DATE_COLUMN)
   ) {
@@ -530,14 +540,59 @@ function isForeignCurrencyRow(
   row: ExcelRow,
   rowColumnLookup: Map<string, string>,
 ): boolean {
+  const currencyCode = getInvoiceCurrencyCode(row, rowColumnLookup);
+
+  return currencyCode !== "" && currencyCode !== "CDF";
+}
+
+function getImportCurrencyValue(
+  row: ExcelRow,
+  value: ExcelCell,
+  rowColumnLookup: Map<string, string>,
+): ExcelCell {
+  const currencyCode = getInvoiceCurrencyCode(row, rowColumnLookup);
+
+  if (currencyCode !== "") {
+    return currencyCode;
+  }
+
+  return isBlankValue(value) ? null : value;
+}
+
+function getImportExchangeRateValue(
+  row: ExcelRow,
+  value: ExcelCell,
+  rowColumnLookup: Map<string, string>,
+): ExcelCell {
+  const currencyCode = getInvoiceCurrencyCode(row, rowColumnLookup);
+
+  if (currencyCode === "CDF") {
+    return 1;
+  }
+
+  if (currencyCode === "") {
+    return isBlankValue(value) ? null : value;
+  }
+
+  const b2fExchangeRate = getMappedValueForKnownColumn(
+    row,
+    B2F_EXCHANGE_RATE_COLUMN,
+    rowColumnLookup,
+  );
+
+  return isBlankValue(b2fExchangeRate) ? null : b2fExchangeRate;
+}
+
+function getInvoiceCurrencyCode(
+  row: ExcelRow,
+  rowColumnLookup: Map<string, string>,
+): string {
   const currency = getMappedValueForKnownColumns(
     row,
     B2F_CURRENCY_COLUMN_CANDIDATES,
     rowColumnLookup,
   );
-  const currencyCode = formatCurrencyCode(currency);
-
-  return currencyCode !== "" && currencyCode !== "CDF";
+  return formatCurrencyCode(currency);
 }
 
 function formatCurrencyCode(value: ExcelCell): string {
