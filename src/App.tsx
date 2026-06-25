@@ -47,7 +47,7 @@ export default function App() {
   const [dgiRateError, setDgiRateError] = useState<string | null>(null);
   const [dgiRateMeta, setDgiRateMeta] = useState<string | null>(null);
   const [dgiRatePlaceholder, setDgiRatePlaceholder] = useState(
-    "En attente du taux BCC du jour",
+    "En attente du taux DGI du jour",
   );
   const [isFetchingDgiRate, setIsFetchingDgiRate] = useState(false);
 
@@ -184,17 +184,18 @@ export default function App() {
     try {
       const bccRate = await fetchBccUsdRate();
       setDgiRateInput(formatRateInput(bccRate.rate));
-      setDgiRatePlaceholder("Taux BCC du jour");
+      setDgiRatePlaceholder("Taux DGI du jour");
+      const publishedAt = formatPublishedAtInFrench(bccRate.publishedAt);
       setDgiRateMeta(
-        bccRate.publishedAt
-          ? `Taux BCC : ${formatRateInput(bccRate.rate)} - ${bccRate.publishedAt}`
-          : `Taux BCC : ${formatRateInput(bccRate.rate)}`,
+        publishedAt
+          ? `Taux DGI du jour : ${formatRateInput(bccRate.rate)} - ${publishedAt}`
+          : `Taux DGI du jour : ${formatRateInput(bccRate.rate)}`,
       );
       cacheBccRate(bccRate);
       setDgiRateError(null);
     } catch {
       setDgiRateMeta(
-        "Taux BCC indisponible automatiquement. Vous pouvez le renseigner manuellement.",
+        "Taux DGI indisponible automatiquement. Vous pouvez le renseigner manuellement.",
       );
     } finally {
       setIsFetchingDgiRate(false);
@@ -510,7 +511,7 @@ function ExchangeRatePrompt({
             </div>
             <div className="rounded-lg bg-[#fff4e5] px-4 py-3 text-sm font-semibold text-[#9a4a00]">
               {isFetchingRate
-                ? "Récupération du taux BCC en cours..."
+                ? "Récupération du taux DGI en cours..."
                 : `Date cours appliquée : ${todayLabel}`}
             </div>
           </div>
@@ -765,12 +766,12 @@ function getCachedBccRatePlaceholder(): string {
   const cachedRate = readCachedBccRate();
 
   if (!cachedRate) {
-    return "En attente du taux BCC du jour";
+    return "En attente du taux DGI du jour";
   }
 
   const savedDate = formatCachedRateDate(cachedRate.savedAt);
   const dateSuffix = savedDate ? ` (${savedDate})` : "";
-  return `Dernier taux BCC connu${dateSuffix} : ${formatRateInput(cachedRate.rate)}`;
+  return `Dernier taux DGI connu${dateSuffix} : ${formatRateInput(cachedRate.rate)}`;
 }
 
 function readCachedBccRate(): CachedBccRate | null {
@@ -824,8 +825,84 @@ function formatCachedRateDate(value: string): string {
     return "";
   }
 
-  return formatExportDate(date);
+  return formatLongFrenchDate(date, false);
 }
+
+function formatPublishedAtInFrench(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+
+  const parsedDate = parseEnglishPublishedAt(value);
+
+  if (!parsedDate) {
+    return value;
+  }
+
+  return formatLongFrenchDate(parsedDate, true);
+}
+
+function parseEnglishPublishedAt(value: string): Date | null {
+  const match = value.match(
+    /^(?:[A-Za-z]+,\s*)?(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})(?:\s+(\d{1,2}):(\d{2}):(\d{2}))?$/,
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const [, dayText, monthText, yearText, hourText, minuteText, secondText] =
+    match;
+  const month = ENGLISH_MONTH_INDEX[monthText.toLowerCase()];
+
+  if (month === undefined) {
+    return null;
+  }
+
+  return new Date(
+    Number(yearText),
+    month,
+    Number(dayText),
+    Number(hourText ?? 0),
+    Number(minuteText ?? 0),
+    Number(secondText ?? 0),
+  );
+}
+
+function formatLongFrenchDate(value: Date, includeTime: boolean): string {
+  const formatter = new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    ...(includeTime
+      ? {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }
+      : {}),
+  });
+  const formattedDate = formatter.format(value).replace(/\s+/g, " ").trim();
+
+  return formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
+}
+
+const ENGLISH_MONTH_INDEX: Record<string, number> = {
+  january: 0,
+  february: 1,
+  march: 2,
+  april: 3,
+  may: 4,
+  june: 5,
+  july: 6,
+  august: 7,
+  september: 8,
+  october: 9,
+  november: 10,
+  december: 11,
+};
 
 async function fetchBccUsdRate(): Promise<BccUsdRate> {
   const response = await fetch("/api/bcc-rate", {
@@ -833,7 +910,7 @@ async function fetchBccUsdRate(): Promise<BccUsdRate> {
   });
 
   if (!response.ok) {
-    throw new Error("Taux BCC indisponible.");
+    throw new Error("Taux DGI indisponible.");
   }
 
   const payload = (await response.json()) as Partial<BccUsdRate>;
@@ -843,7 +920,7 @@ async function fetchBccUsdRate(): Promise<BccUsdRate> {
     typeof payload.rate !== "number" ||
     !Number.isFinite(payload.rate)
   ) {
-    throw new Error("Réponse BCC invalide.");
+    throw new Error("Réponse DGI invalide.");
   }
 
   return {
