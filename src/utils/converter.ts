@@ -147,6 +147,8 @@ const EXCHANGE_RATE_COLUMN_CANDIDATES = [
 ];
 const DEFAULT_AMOUNT_TOLERANCE = 0.05;
 const CDF_AMOUNT_TOLERANCE = 5;
+const MAX_INFERRED_RATE_DRIFT_RATIO = 0.02;
+const MAX_INFERRED_RATE_PAIR_DRIFT_RATIO = 0.002;
 
 type ConversionOptions = {
   normalizationDate?: Date;
@@ -200,6 +202,12 @@ type CreditNoteContext = {
   reference?: ReferenceInvoice;
   referenceType?: "RAN" | "COR";
   referenceDescription?: "ANNULATION" | "CORRECTION";
+  inferredExchangeRate?: number;
+};
+
+type CreditNoteReferenceMatch = {
+  isFullCancellation: boolean;
+  inferredExchangeRate?: number;
 };
 
 type CreditNoteResolution = {
@@ -753,20 +761,23 @@ function buildCreditNoteContext(
     };
   }
 
-  const isFullCancellation = isFullCreditNote(group, reference);
+  const referenceMatch = resolveCreditNoteReferenceMatch(group, reference);
 
   return {
     isCreditNote: true,
     reference,
-    referenceType: isFullCancellation ? "RAN" : "COR",
-    referenceDescription: isFullCancellation ? "ANNULATION" : "CORRECTION",
+    referenceType: referenceMatch.isFullCancellation ? "RAN" : "COR",
+    referenceDescription: referenceMatch.isFullCancellation
+      ? "ANNULATION"
+      : "CORRECTION",
+    inferredExchangeRate: referenceMatch.inferredExchangeRate,
   };
 }
 
-function isFullCreditNote(
+function resolveCreditNoteReferenceMatch(
   group: InvoiceGroup,
   reference: ReferenceInvoice,
-): boolean {
+): CreditNoteReferenceMatch {
   if (
     amountPairMatches(
       group.totalHT,
@@ -775,7 +786,7 @@ function isFullCreditNote(
       reference.totalTTC,
     )
   ) {
-    return true;
+    return { isFullCancellation: true };
   }
 
   const rates = uniquePositiveRates([
@@ -793,7 +804,7 @@ function isFullCreditNote(
         CDF_AMOUNT_TOLERANCE,
       )
     ) {
-      return true;
+      return { isFullCancellation: true };
     }
 
     if (
@@ -805,11 +816,16 @@ function isFullCreditNote(
         CDF_AMOUNT_TOLERANCE,
       )
     ) {
-      return true;
+      return { isFullCancellation: true };
     }
   }
 
-  return false;
+  const inferredExchangeRate = inferReferenceExchangeRate(group, reference);
+
+  return {
+    isFullCancellation: Boolean(inferredExchangeRate),
+    inferredExchangeRate,
+  };
 }
 
 function amountPairMatches(
@@ -850,6 +866,77 @@ function uniquePositiveRates(rates: Array<number | undefined>): number[] {
   }
 
   return uniqueRates;
+}
+
+function inferReferenceExchangeRate(
+  group: InvoiceGroup,
+  reference: ReferenceInvoice,
+): number | undefined {
+  if (!isForeignCurrencyGroup(group)) {
+    return undefined;
+  }
+
+  const htRate = inferExchangeRate(group.totalHT, reference.totalHT);
+  const ttcRate = inferExchangeRate(group.totalTTC, reference.totalTTC);
+
+  if (!htRate || !ttcRate) {
+    return undefined;
+  }
+
+  const inferredRate = (htRate + ttcRate) / 2;
+
+  if (!ratesAreClose(htRate, ttcRate, MAX_INFERRED_RATE_PAIR_DRIFT_RATIO)) {
+    return undefined;
+  }
+
+  if (
+    group.exchangeRate &&
+    !ratesAreClose(
+      inferredRate,
+      group.exchangeRate,
+      MAX_INFERRED_RATE_DRIFT_RATIO,
+    )
+  ) {
+    return undefined;
+  }
+
+  return roundExchangeRate(inferredRate);
+}
+
+function isForeignCurrencyGroup(group: InvoiceGroup): boolean {
+  return (
+    Boolean(group.currencyCode && group.currencyCode !== "CDF") ||
+    Boolean(group.exchangeRate && group.exchangeRate > 1)
+  );
+}
+
+function inferExchangeRate(
+  foreignAmount: number,
+  cdfAmount: number,
+): number | undefined {
+  const normalizedForeignAmount = Math.abs(foreignAmount);
+  const normalizedCdfAmount = Math.abs(cdfAmount);
+
+  if (normalizedForeignAmount <= 0 || normalizedCdfAmount <= 0) {
+    return undefined;
+  }
+
+  const rate = normalizedCdfAmount / normalizedForeignAmount;
+
+  return Number.isFinite(rate) && rate > 1 ? rate : undefined;
+}
+
+function ratesAreClose(
+  left: number,
+  right: number,
+  maxDriftRatio: number,
+): boolean {
+  const denominator = Math.max(Math.abs(left), Math.abs(right), 1);
+  return Math.abs(left - right) / denominator <= maxDriftRatio;
+}
+
+function roundExchangeRate(rate: number): number {
+  return Math.round(rate * 10000) / 10000;
 }
 
 function formatCount(count: number, singular: string, plural: string): string {
@@ -971,27 +1058,34 @@ function applyCreditNoteValues(
     CREDIT_NOTE_ORIGIN_ERP_DATE_COLUMN,
     creditNoteContext.reference.date,
   );
-  applyReferenceExchangeRate(row, creditNoteContext.reference);
+  applyReferenceExchangeRate(
+    row,
+    creditNoteContext.reference,
+    creditNoteContext.inferredExchangeRate,
+  );
 }
 
 function applyReferenceExchangeRate(
   row: ExcelRow,
   reference: ReferenceInvoice,
+  inferredExchangeRate?: number,
 ): void {
   if (reference.currencyCode) {
     setRowValue(row, IMPORT_CURRENCY_COLUMN, reference.currencyCode);
   }
 
-  if (!reference.exchangeRate) {
+  const exchangeRate = reference.exchangeRate ?? inferredExchangeRate;
+
+  if (!exchangeRate) {
     return;
   }
 
   setCandidateRowValue(
     row,
     B2F_EXCHANGE_RATE_COLUMN_CANDIDATES,
-    reference.exchangeRate,
+    exchangeRate,
   );
-  setRowValue(row, IMPORT_EXCHANGE_RATE_COLUMN, reference.exchangeRate);
+  setRowValue(row, IMPORT_EXCHANGE_RATE_COLUMN, exchangeRate);
 
   if (reference.exchangeRateDate) {
     setCandidateRowValue(
