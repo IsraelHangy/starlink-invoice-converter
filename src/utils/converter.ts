@@ -141,6 +141,12 @@ const B2F_EXCHANGE_RATE_COLUMN_CANDIDATES = [
 
 const IMPORT_CURRENCY_COLUMN = "Devise Import";
 const IMPORT_EXCHANGE_RATE_COLUMN = "Taux Devise Import vers CDF";
+const EXCHANGE_RATE_COLUMN_CANDIDATES = [
+  ...B2F_EXCHANGE_RATE_COLUMN_CANDIDATES,
+  IMPORT_EXCHANGE_RATE_COLUMN,
+];
+const DEFAULT_AMOUNT_TOLERANCE = 0.05;
+const CDF_AMOUNT_TOLERANCE = 5;
 
 type ConversionOptions = {
   normalizationDate?: Date;
@@ -169,6 +175,8 @@ type InvoiceGroup = {
   taxTotal: number;
   totalHT: number;
   totalTTC: number;
+  currencyCode: string;
+  exchangeRate?: number;
 };
 
 type InvoiceGroupingResult = {
@@ -182,6 +190,9 @@ type ReferenceInvoice = {
   date: ExcelCell;
   totalHT: number;
   totalTTC: number;
+  currencyCode: string;
+  exchangeRate?: number;
+  exchangeRateDate?: ExcelCell;
 };
 
 type CreditNoteContext = {
@@ -363,6 +374,8 @@ export function convertStarlinkToDexy(
   const documentTypeColumn = findColumn(columns, TYPE_FACTURE_COLUMN_CANDIDATES);
   const totalHTColumn = findColumn(columns, TOTAL_HT_COLUMN_CANDIDATES);
   const totalTTCColumn = findColumn(columns, TOTAL_TTC_COLUMN_CANDIDATES);
+  const currencyColumn = findColumn(columns, B2F_CURRENCY_COLUMN_CANDIDATES);
+  const exchangeRateColumn = findColumn(columns, EXCHANGE_RATE_COLUMN_CANDIDATES);
   const documentTypeSummary = summarizeDocumentTypes(rows, documentTypeColumn);
   const missingColumns = [
     !invoiceColumn ? "Numéro facture" : null,
@@ -406,6 +419,8 @@ export function convertStarlinkToDexy(
     documentTypeColumn,
     totalHTColumn,
     totalTTCColumn,
+    currencyColumn,
+    exchangeRateColumn,
   );
   const warnings: string[] = [];
   const referenceInvoices = documentTypeSummary.hasCreditNotes
@@ -524,6 +539,8 @@ function groupRowsByInvoice(
   documentTypeColumn?: string,
   totalHTColumn?: string,
   totalTTCColumn?: string,
+  currencyColumn?: string,
+  exchangeRateColumn?: string,
 ): InvoiceGroupingResult {
   const groupsByInvoice = new Map<string, InvoiceGroup>();
   let skippedRowsWithoutInvoice = 0;
@@ -548,6 +565,10 @@ function groupRowsByInvoice(
         taxTotal: 0,
         totalHT: totalHTColumn ? parseAmount(row[totalHTColumn]) : 0,
         totalTTC: totalTTCColumn ? parseAmount(row[totalTTCColumn]) : 0,
+        currencyCode: currencyColumn ? normalizeCurrencyCode(row[currencyColumn]) : "",
+        exchangeRate: exchangeRateColumn
+          ? parseExchangeRate(row[exchangeRateColumn])
+          : undefined,
       };
 
     group.rows.push({ ...row });
@@ -560,6 +581,12 @@ function groupRowsByInvoice(
     }
     if (group.totalTTC === 0 && totalTTCColumn) {
       group.totalTTC = parseAmount(row[totalTTCColumn]);
+    }
+    if (!group.currencyCode && currencyColumn) {
+      group.currencyCode = normalizeCurrencyCode(row[currencyColumn]);
+    }
+    if (!group.exchangeRate && exchangeRateColumn) {
+      group.exchangeRate = parseExchangeRate(row[exchangeRateColumn]);
     }
     groupsByInvoice.set(invoiceNumber, group);
   }
@@ -594,6 +621,15 @@ function buildReferenceInvoiceIndex(
   const dateColumn = findColumn(referenceColumns, REFERENCE_DATE_COLUMN_CANDIDATES);
   const totalHTColumn = findColumn(referenceColumns, TOTAL_HT_COLUMN_CANDIDATES);
   const totalTTCColumn = findColumn(referenceColumns, TOTAL_TTC_COLUMN_CANDIDATES);
+  const currencyColumn = findColumn(referenceColumns, B2F_CURRENCY_COLUMN_CANDIDATES);
+  const exchangeRateColumn = findColumn(
+    referenceColumns,
+    EXCHANGE_RATE_COLUMN_CANDIDATES,
+  );
+  const exchangeRateDateColumn = findColumn(
+    referenceColumns,
+    B2F_EXCHANGE_RATE_DATE_COLUMN_CANDIDATES,
+  );
   const missingColumns = [
     !typeColumn ? "Type facture" : null,
     !invoiceColumn ? "Facture" : null,
@@ -639,6 +675,15 @@ function buildReferenceInvoiceIndex(
       date: row[dateColumn],
       totalHT: parseAmount(row[totalHTColumn]),
       totalTTC: parseAmount(row[totalTTCColumn]),
+      currencyCode: currencyColumn
+        ? normalizeCurrencyCode(row[currencyColumn])
+        : "",
+      exchangeRate: exchangeRateColumn
+        ? parseExchangeRate(row[exchangeRateColumn])
+        : undefined,
+      exchangeRateDate: exchangeRateDateColumn
+        ? row[exchangeRateDateColumn]
+        : undefined,
     });
   }
 
@@ -722,14 +767,89 @@ function isFullCreditNote(
   group: InvoiceGroup,
   reference: ReferenceInvoice,
 ): boolean {
+  if (
+    amountPairMatches(
+      group.totalHT,
+      group.totalTTC,
+      reference.totalHT,
+      reference.totalTTC,
+    )
+  ) {
+    return true;
+  }
+
+  const rates = uniquePositiveRates([
+    reference.exchangeRate,
+    group.exchangeRate,
+  ]);
+
+  for (const rate of rates) {
+    if (
+      amountPairMatches(
+        group.totalHT * rate,
+        group.totalTTC * rate,
+        reference.totalHT,
+        reference.totalTTC,
+        CDF_AMOUNT_TOLERANCE,
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      amountPairMatches(
+        group.totalHT,
+        group.totalTTC,
+        reference.totalHT * rate,
+        reference.totalTTC * rate,
+        CDF_AMOUNT_TOLERANCE,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function amountPairMatches(
+  leftHT: number,
+  leftTTC: number,
+  rightHT: number,
+  rightTTC: number,
+  tolerance = DEFAULT_AMOUNT_TOLERANCE,
+): boolean {
   return (
-    amountsMatch(group.totalHT, reference.totalHT) &&
-    amountsMatch(group.totalTTC, reference.totalTTC)
+    amountsMatch(leftHT, rightHT, tolerance) &&
+    amountsMatch(leftTTC, rightTTC, tolerance)
   );
 }
 
-function amountsMatch(left: number, right: number): boolean {
-  return Math.abs(roundCurrency(Math.abs(left)) - roundCurrency(Math.abs(right))) <= 0.05;
+function amountsMatch(
+  left: number,
+  right: number,
+  tolerance = DEFAULT_AMOUNT_TOLERANCE,
+): boolean {
+  return (
+    Math.abs(roundCurrency(Math.abs(left)) - roundCurrency(Math.abs(right))) <=
+    tolerance
+  );
+}
+
+function uniquePositiveRates(rates: Array<number | undefined>): number[] {
+  const uniqueRates: number[] = [];
+
+  for (const rate of rates) {
+    if (!rate || rate <= 0 || !Number.isFinite(rate)) {
+      continue;
+    }
+
+    if (!uniqueRates.some((existingRate) => amountsMatch(existingRate, rate))) {
+      uniqueRates.push(rate);
+    }
+  }
+
+  return uniqueRates;
 }
 
 function formatCount(count: number, singular: string, plural: string): string {
@@ -851,6 +971,35 @@ function applyCreditNoteValues(
     CREDIT_NOTE_ORIGIN_ERP_DATE_COLUMN,
     creditNoteContext.reference.date,
   );
+  applyReferenceExchangeRate(row, creditNoteContext.reference);
+}
+
+function applyReferenceExchangeRate(
+  row: ExcelRow,
+  reference: ReferenceInvoice,
+): void {
+  if (reference.currencyCode) {
+    setRowValue(row, IMPORT_CURRENCY_COLUMN, reference.currencyCode);
+  }
+
+  if (!reference.exchangeRate) {
+    return;
+  }
+
+  setCandidateRowValue(
+    row,
+    B2F_EXCHANGE_RATE_COLUMN_CANDIDATES,
+    reference.exchangeRate,
+  );
+  setRowValue(row, IMPORT_EXCHANGE_RATE_COLUMN, reference.exchangeRate);
+
+  if (reference.exchangeRateDate) {
+    setCandidateRowValue(
+      row,
+      B2F_EXCHANGE_RATE_DATE_COLUMN_CANDIDATES,
+      reference.exchangeRateDate,
+    );
+  }
 }
 
 function setPositiveNumericRowValue(row: ExcelRow, columnName: string): void {
@@ -1103,6 +1252,15 @@ function summarizeDocumentTypes(
 
 function normalizeDocumentType(value: ExcelCell): string {
   return formatCellAsText(value).toUpperCase();
+}
+
+function normalizeCurrencyCode(value: ExcelCell): string {
+  return formatCellAsText(value).toUpperCase();
+}
+
+function parseExchangeRate(value: ExcelCell): number | undefined {
+  const parsedValue = parseAmount(value);
+  return parsedValue > 0 ? parsedValue : undefined;
 }
 
 function findExciseTaxColumn(columns: string[]): string | undefined {
