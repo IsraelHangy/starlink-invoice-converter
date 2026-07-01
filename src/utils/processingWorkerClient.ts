@@ -1,4 +1,9 @@
-import type { ConversionResult, ExcelRow, ImportedWorkbook } from "../types";
+import type {
+  ConversionResult,
+  ExcelRow,
+  ImportedWorkbook,
+  ReferenceWorkbook,
+} from "../types";
 
 export type ExchangeRateUpdateRequest = {
   currency: string;
@@ -17,6 +22,7 @@ type WorkerTaskPayload =
       columns: string[];
       normalizationDate: Date;
       exchangeRateUpdate?: ExchangeRateUpdateRequest;
+      referenceWorkbook?: ReferenceWorkbook;
     };
 
 type WorkerRequest = WorkerTaskPayload & {
@@ -63,6 +69,7 @@ export function convertStarlinkToDexyInWorker(
   columns: string[],
   normalizationDate: Date,
   exchangeRateUpdate?: ExchangeRateUpdateRequest,
+  referenceWorkbook?: ReferenceWorkbook,
 ): Promise<ConversionResult> {
   return runWorkerTask<ConversionResult>({
     type: "convert-workbook",
@@ -70,6 +77,7 @@ export function convertStarlinkToDexyInWorker(
     columns,
     normalizationDate,
     exchangeRateUpdate,
+    referenceWorkbook,
   });
 }
 

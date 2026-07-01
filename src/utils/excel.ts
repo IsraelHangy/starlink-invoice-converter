@@ -1,6 +1,8 @@
 import * as XLSX from "xlsx";
 import type { ExcelCell, ExcelRow, ImportedWorkbook } from "../types";
 import {
+  CREDIT_NOTE_ORIGIN_ERP_DATE_COLUMN,
+  CREDIT_NOTE_ORIGIN_ERP_INVOICE_COLUMN,
   DATE_FACTURE_COLUMN,
   EXCISE_TAX_COLUMN,
   OLD_DATE_COLUMN,
@@ -27,6 +29,10 @@ const B2F_EXCHANGE_RATE_DATE_COLUMN = "B2F Devise [Date cours]";
 const B2F_EXCHANGE_RATE_COLUMN = "B2F Devise [Taux de change]";
 const IMPORT_CURRENCY_COLUMN = "Devise Import";
 const IMPORT_EXCHANGE_RATE_COLUMN = "Taux Devise Import vers CDF";
+const EXTRA_EXPORT_COLUMNS = [
+  CREDIT_NOTE_ORIGIN_ERP_INVOICE_COLUMN,
+  CREDIT_NOTE_ORIGIN_ERP_DATE_COLUMN,
+];
 const INVOICE_NUMBER_COLUMN_CANDIDATES = [
   "Numéro facture",
   "Numero facture",
@@ -194,16 +200,18 @@ function resolveExportColumns(
   const standardColumns = templateColumns.filter(
     (column) => !isExciseTaxExportColumn(column),
   );
+  const exportColumns = [...standardColumns];
+
+  appendExtraExportColumns(exportColumns, fallbackColumns);
 
   if (!hasColumn(fallbackColumns, OLD_DATE_COLUMN)) {
-    return standardColumns;
+    return exportColumns;
   }
 
-  if (hasColumn(standardColumns, OLD_DATE_COLUMN)) {
-    return standardColumns;
+  if (hasColumn(exportColumns, OLD_DATE_COLUMN)) {
+    return exportColumns;
   }
 
-  const exportColumns = [...standardColumns];
   const invoiceDateIndex = exportColumns.findIndex((column) =>
     isSameColumn(column, INVOICE_DATE_COLUMN),
   );
@@ -212,6 +220,21 @@ function resolveExportColumns(
 
   exportColumns.splice(insertIndex, 0, OLD_DATE_COLUMN);
   return exportColumns;
+}
+
+function appendExtraExportColumns(
+  exportColumns: string[],
+  fallbackColumns: string[],
+): void {
+  for (const extraColumn of EXTRA_EXPORT_COLUMNS) {
+    const fallbackColumn = fallbackColumns.find((column) =>
+      isSameColumn(column, extraColumn),
+    );
+
+    if (fallbackColumn && !hasColumn(exportColumns, fallbackColumn)) {
+      exportColumns.push(fallbackColumn);
+    }
+  }
 }
 
 function createTemplateColumnIndexes(columns: string[]): Map<string, number> {
@@ -614,6 +637,15 @@ function getMappedValueForTemplateColumn(
     return row[templateColumn];
   }
 
+  if (isCreditNoteOriginErpColumn(templateColumn)) {
+    return getExactMappedValueForTemplateColumn(
+      row,
+      normalizedTemplateColumn,
+      comparableTemplateColumn,
+      rowColumnLookup,
+    );
+  }
+
   const rowColumn =
     rowColumnLookup.get(normalizedTemplateColumn) ??
     rowColumnLookup.get(comparableTemplateColumn) ??
@@ -621,6 +653,26 @@ function getMappedValueForTemplateColumn(
     findLooseRowColumn(comparableTemplateColumn, rowColumnLookup);
 
   return rowColumn ? row[rowColumn] : null;
+}
+
+function getExactMappedValueForTemplateColumn(
+  row: ExcelRow,
+  normalizedTemplateColumn: string,
+  comparableTemplateColumn: string,
+  rowColumnLookup: Map<string, string>,
+): ExcelCell {
+  const rowColumn =
+    rowColumnLookup.get(normalizedTemplateColumn) ??
+    rowColumnLookup.get(comparableTemplateColumn);
+
+  return rowColumn ? row[rowColumn] : null;
+}
+
+function isCreditNoteOriginErpColumn(columnName: string): boolean {
+  return (
+    isSameColumn(columnName, CREDIT_NOTE_ORIGIN_ERP_INVOICE_COLUMN) ||
+    isSameColumn(columnName, CREDIT_NOTE_ORIGIN_ERP_DATE_COLUMN)
+  );
 }
 
 function getMappedValueForKnownColumn(
@@ -866,7 +918,8 @@ function applyTemplateColumnOverride(
   }
 
   if (
-    isSameColumn(columnName, B2F_EXCHANGE_RATE_DATE_COLUMN)
+    isSameColumn(columnName, B2F_EXCHANGE_RATE_DATE_COLUMN) ||
+    isSameColumn(columnName, CREDIT_NOTE_ORIGIN_ERP_DATE_COLUMN)
   ) {
     return {
       ...columnFormat,

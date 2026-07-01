@@ -10,6 +10,11 @@ export interface ImportedWorkbook {
   columns: string[];
 }
 
+export interface ReferenceWorkbook {
+  rows: ExcelRow[];
+  columns: string[];
+}
+
 export interface ConversionSummary {
   invoicesProcessed: number;
   originalRows: number;

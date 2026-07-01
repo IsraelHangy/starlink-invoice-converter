@@ -1,4 +1,9 @@
-import type { ConversionResult, ExcelCell, ExcelRow } from "../types";
+import type {
+  ConversionResult,
+  ExcelCell,
+  ExcelRow,
+  ReferenceWorkbook,
+} from "../types";
 
 export const EXCISE_TAX_COLUMN =
   "Congo DRC Telecommunication Excise Tax_Final";
@@ -8,7 +13,22 @@ export const COMMENT_B_COLUMN = "Commentaire B";
 export const COMMENT_C_COLUMN = "Commentaire C";
 export const COMMENT_D_COLUMN = "Commentaire D";
 export const COMMENT_E_COLUMN = "Commentaire E";
+export const COMMENT_F_COLUMN = "Commentaire F";
+export const COMMENT_G_COLUMN = "Commentaire G";
+export const COMMENT_H_COLUMN = "Commentaire H";
 export const OLD_DATE_COLUMN = "Old Date";
+
+const TYPE_FACTURE_COLUMN = "Type facture";
+const SALES_DOCUMENT_TYPE = "FV";
+const CREDIT_NOTE_DOCUMENT_TYPE = "FA";
+const CREDIT_NOTE_ORIGIN_DGI_COLUMN = "Facture origine [FA | EA]";
+const CREDIT_NOTE_REFERENCE_TYPE_COLUMN = "Type référence [FA | EA]";
+const CREDIT_NOTE_REFERENCE_DESCRIPTION_COLUMN =
+  "Description de référence [FA | EA]";
+export const CREDIT_NOTE_ORIGIN_ERP_INVOICE_COLUMN =
+  "Numéro Facture origne [ERP]";
+export const CREDIT_NOTE_ORIGIN_ERP_DATE_COLUMN =
+  "Date Facture origine [ERP]";
 
 const EXCISE_TAX_COLUMN_CANDIDATES = [
   EXCISE_TAX_COLUMN,
@@ -54,6 +74,52 @@ const NIF_CLIENT_COLUMN_CANDIDATES = [
   "Customer Tax ID",
 ];
 
+const TYPE_FACTURE_COLUMN_CANDIDATES = [
+  TYPE_FACTURE_COLUMN,
+  "Type de facture",
+  "Invoice Type",
+  "Document Type",
+];
+
+const TOTAL_HT_COLUMN_CANDIDATES = [
+  "Total HT",
+  "Total hors taxe",
+  "Total Hors Taxe",
+  "Total tax basis",
+  "transaction_tax_basis",
+];
+
+const TOTAL_TTC_COLUMN_CANDIDATES = [
+  "Total TTC",
+  "Total toutes taxes",
+  "Total gross amount",
+  "transaction_gross_amount",
+];
+
+const REFERENCE_FACTURE_COLUMN_CANDIDATES = [
+  "Facture",
+  "Numéro facture",
+  "Numero facture",
+  "Numéro Document",
+  "Numero Document",
+  "Invoice Number",
+  "Invoice",
+];
+
+const REFERENCE_DATE_COLUMN_CANDIDATES = [
+  "Date",
+  DATE_FACTURE_COLUMN,
+  "Date facture origine",
+  "Invoice Date",
+];
+
+const REFERENCE_CODE_DEF_DGI_COLUMN_CANDIDATES = [
+  "Code DEF DGI",
+  "Code DEF",
+  "DEF DGI",
+  "Code DGI",
+];
+
 const B2F_CURRENCY_COLUMN_CANDIDATES = [
   "B2F Devise [Nom]",
   "B2F Devise Nom",
@@ -83,6 +149,7 @@ type ConversionOptions = {
     rate: number;
     rateDate: Date;
   };
+  referenceWorkbook?: ReferenceWorkbook;
 };
 
 type DexyFieldKey =
@@ -97,13 +164,38 @@ type DexyFieldKey =
 
 type InvoiceGroup = {
   invoiceNumber: string;
+  documentType: string;
   rows: ExcelRow[];
   taxTotal: number;
+  totalHT: number;
+  totalTTC: number;
 };
 
 type InvoiceGroupingResult = {
   groups: InvoiceGroup[];
   skippedRowsWithoutInvoice: number;
+};
+
+type ReferenceInvoice = {
+  invoiceNumber: string;
+  codeDefDgi: string;
+  date: ExcelCell;
+  totalHT: number;
+  totalTTC: number;
+};
+
+type CreditNoteContext = {
+  isCreditNote: boolean;
+  reference?: ReferenceInvoice;
+  referenceType?: "RAN" | "COR";
+  referenceDescription?: "ANNULATION" | "CORRECTION";
+};
+
+type CreditNoteResolution = {
+  contexts: Map<string, CreditNoteContext>;
+  totalCreditNotes: number;
+  matchedCreditNotes: number;
+  missingCreditNotes: number;
 };
 
 const LINE_NUMBER_FALLBACK_COLUMN = "N° ligne";
@@ -268,6 +360,10 @@ export function convertStarlinkToDexy(
   const columns = normalizeColumns(sourceColumns ?? collectColumns(rows));
   const taxColumn = findExciseTaxColumn(columns);
   const invoiceColumn = findColumn(columns, INVOICE_COLUMN_CANDIDATES);
+  const documentTypeColumn = findColumn(columns, TYPE_FACTURE_COLUMN_CANDIDATES);
+  const totalHTColumn = findColumn(columns, TOTAL_HT_COLUMN_CANDIDATES);
+  const totalTTCColumn = findColumn(columns, TOTAL_TTC_COLUMN_CANDIDATES);
+  const documentTypeSummary = summarizeDocumentTypes(rows, documentTypeColumn);
   const missingColumns = [
     !invoiceColumn ? "Numéro facture" : null,
     !taxColumn ? `${EXCISE_TAX_COLUMN} ou Excise Tax_Local` : null,
@@ -278,6 +374,18 @@ export function convertStarlinkToDexy(
       `Les colonnes obligatoires suivantes sont absentes de la feuille : ${missingColumns.join(
         ", ",
       )}.`,
+    );
+  }
+
+  if (documentTypeSummary.hasSales && documentTypeSummary.hasCreditNotes) {
+    throw new Error(
+      "Ce fichier contient a la fois des ventes (FV) et des avoirs (FA). Importez les ventes et les avoirs dans deux fichiers separes.",
+    );
+  }
+
+  if (documentTypeSummary.hasCreditNotes && !options.referenceWorkbook) {
+    throw new Error(
+      "Le fichier contient des avoirs (FA). Importez le template reference DEXY contenant les factures de vente certifiees avant de convertir.",
     );
   }
 
@@ -295,8 +403,14 @@ export function convertStarlinkToDexy(
     rows,
     invoiceColumn,
     taxColumn,
+    documentTypeColumn,
+    totalHTColumn,
+    totalTTCColumn,
   );
   const warnings: string[] = [];
+  const referenceInvoices = documentTypeSummary.hasCreditNotes
+    ? buildReferenceInvoiceIndex(options.referenceWorkbook)
+    : new Map<string, ReferenceInvoice>();
   const technicalRows: ExcelRow[] = [];
   let totalTax = 0;
   let taxRowsAdded = 0;
@@ -307,7 +421,35 @@ export function convertStarlinkToDexy(
     );
   }
 
+  const creditNoteResolution = documentTypeSummary.hasCreditNotes
+    ? resolveCreditNoteContexts(groups, referenceInvoices)
+    : null;
+
+  if (
+    creditNoteResolution &&
+    creditNoteResolution.totalCreditNotes > 0 &&
+    creditNoteResolution.matchedCreditNotes === 0
+  ) {
+    throw new Error(
+      "Conversion des avoirs impossible : aucune facture d'avoir n'a retrouvé sa facture de vente certifiée avec Code DEF DGI dans le template référence DEXY. Importez un template référence contenant les ventes certifiées correspondant à ces avoirs, puis relancez la conversion.",
+    );
+  }
+
+  if (creditNoteResolution && creditNoteResolution.missingCreditNotes > 0) {
+    warnings.push(
+      `Références DEXY partiellement trouvées : ${formatCount(
+        creditNoteResolution.missingCreditNotes,
+        "avoir introuvable",
+        "avoirs introuvables",
+      )} sur ${creditNoteResolution.totalCreditNotes}. Les champs d'origine FA restent vides uniquement pour les avoirs non retrouvés.`,
+    );
+  }
+
   for (const group of groups) {
+    const creditNoteContext =
+      creditNoteResolution?.contexts.get(getCreditNoteContextKey(group)) ??
+      buildCreditNoteContext(group, referenceInvoices);
+
     group.rows.forEach((row, index) => {
       const outputRow = createTraceableRow(
         row,
@@ -317,16 +459,21 @@ export function convertStarlinkToDexy(
         group.invoiceNumber,
         normalizationDate,
         options.exchangeRateUpdate,
+        dexyColumns,
+        creditNoteContext,
       );
       outputRow[dexyColumns.lineNumber] = index + 1;
       technicalRows.push(outputRow);
     });
 
     const roundedTax = roundCurrency(group.taxTotal);
+    const exportedTax = creditNoteContext.isCreditNote
+      ? Math.abs(roundedTax)
+      : roundedTax;
 
     if (roundedTax !== 0) {
       taxRowsAdded += 1;
-      totalTax += roundedTax;
+      totalTax += exportedTax;
       technicalRows.push(
         createTaxRow(
           group,
@@ -337,6 +484,7 @@ export function convertStarlinkToDexy(
           normalizationDate,
           options.exchangeRateUpdate,
           group.rows.length + 1,
+          creditNoteContext,
         ),
       );
     }
@@ -373,6 +521,9 @@ function groupRowsByInvoice(
   rows: ExcelRow[],
   invoiceColumn: string,
   taxColumn: string,
+  documentTypeColumn?: string,
+  totalHTColumn?: string,
+  totalTTCColumn?: string,
 ): InvoiceGroupingResult {
   const groupsByInvoice = new Map<string, InvoiceGroup>();
   let skippedRowsWithoutInvoice = 0;
@@ -390,12 +541,26 @@ function groupRowsByInvoice(
       existingGroup ??
       {
         invoiceNumber,
+        documentType: normalizeDocumentType(
+          documentTypeColumn ? row[documentTypeColumn] : null,
+        ),
         rows: [],
         taxTotal: 0,
+        totalHT: totalHTColumn ? parseAmount(row[totalHTColumn]) : 0,
+        totalTTC: totalTTCColumn ? parseAmount(row[totalTTCColumn]) : 0,
       };
 
     group.rows.push({ ...row });
     group.taxTotal += parseAmount(row[taxColumn]);
+    if (!group.documentType && documentTypeColumn) {
+      group.documentType = normalizeDocumentType(row[documentTypeColumn]);
+    }
+    if (group.totalHT === 0 && totalHTColumn) {
+      group.totalHT = parseAmount(row[totalHTColumn]);
+    }
+    if (group.totalTTC === 0 && totalTTCColumn) {
+      group.totalTTC = parseAmount(row[totalTTCColumn]);
+    }
     groupsByInvoice.set(invoiceNumber, group);
   }
 
@@ -403,6 +568,172 @@ function groupRowsByInvoice(
     groups: Array.from(groupsByInvoice.values()),
     skippedRowsWithoutInvoice,
   };
+}
+
+function buildReferenceInvoiceIndex(
+  referenceWorkbook?: ReferenceWorkbook,
+): Map<string, ReferenceInvoice> {
+  if (!referenceWorkbook) {
+    return new Map();
+  }
+
+  const referenceColumns = normalizeColumns(
+    referenceWorkbook.columns.length > 0
+      ? referenceWorkbook.columns
+      : collectColumns(referenceWorkbook.rows),
+  );
+  const typeColumn = findColumn(referenceColumns, TYPE_FACTURE_COLUMN_CANDIDATES);
+  const invoiceColumn = findColumn(
+    referenceColumns,
+    REFERENCE_FACTURE_COLUMN_CANDIDATES,
+  );
+  const codeDefColumn = findColumn(
+    referenceColumns,
+    REFERENCE_CODE_DEF_DGI_COLUMN_CANDIDATES,
+  );
+  const dateColumn = findColumn(referenceColumns, REFERENCE_DATE_COLUMN_CANDIDATES);
+  const totalHTColumn = findColumn(referenceColumns, TOTAL_HT_COLUMN_CANDIDATES);
+  const totalTTCColumn = findColumn(referenceColumns, TOTAL_TTC_COLUMN_CANDIDATES);
+  const missingColumns = [
+    !typeColumn ? "Type facture" : null,
+    !invoiceColumn ? "Facture" : null,
+    !codeDefColumn ? "Code DEF DGI" : null,
+    !dateColumn ? "Date" : null,
+    !totalHTColumn ? "Total HT" : null,
+    !totalTTCColumn ? "Total TTC" : null,
+  ].filter((column): column is string => Boolean(column));
+
+  if (
+    !typeColumn ||
+    !invoiceColumn ||
+    !codeDefColumn ||
+    !dateColumn ||
+    !totalHTColumn ||
+    !totalTTCColumn
+  ) {
+    throw new Error(
+      `Le template reference DEXY ne contient pas les colonnes requises : ${missingColumns.join(
+        ", ",
+      )}.`,
+    );
+  }
+
+  const referenceInvoices = new Map<string, ReferenceInvoice>();
+
+  for (const row of referenceWorkbook.rows) {
+    if (normalizeDocumentType(row[typeColumn]) !== SALES_DOCUMENT_TYPE) {
+      continue;
+    }
+
+    const invoiceNumber = normalizeInvoiceNumber(row[invoiceColumn]);
+    const key = normalizeReferenceInvoiceKey(invoiceNumber);
+    const codeDefDgi = formatCellAsText(row[codeDefColumn]);
+
+    if (!key || !codeDefDgi) {
+      continue;
+    }
+
+    referenceInvoices.set(key, {
+      invoiceNumber,
+      codeDefDgi,
+      date: row[dateColumn],
+      totalHT: parseAmount(row[totalHTColumn]),
+      totalTTC: parseAmount(row[totalTTCColumn]),
+    });
+  }
+
+  if (referenceInvoices.size === 0) {
+    throw new Error(
+      "Le template référence DEXY ne contient aucune facture de vente (FV) exploitable avec un Code DEF DGI.",
+    );
+  }
+
+  return referenceInvoices;
+}
+
+function resolveCreditNoteContexts(
+  groups: InvoiceGroup[],
+  referenceInvoices: Map<string, ReferenceInvoice>,
+): CreditNoteResolution {
+  const contexts = new Map<string, CreditNoteContext>();
+  let totalCreditNotes = 0;
+  let matchedCreditNotes = 0;
+  let missingCreditNotes = 0;
+
+  for (const group of groups) {
+    if (group.documentType !== CREDIT_NOTE_DOCUMENT_TYPE) {
+      continue;
+    }
+
+    totalCreditNotes += 1;
+    const context = buildCreditNoteContext(group, referenceInvoices);
+    contexts.set(getCreditNoteContextKey(group), context);
+
+    if (context.reference?.codeDefDgi) {
+      matchedCreditNotes += 1;
+    } else {
+      missingCreditNotes += 1;
+    }
+  }
+
+  return {
+    contexts,
+    totalCreditNotes,
+    matchedCreditNotes,
+    missingCreditNotes,
+  };
+}
+
+function getCreditNoteContextKey(group: InvoiceGroup): string {
+  return normalizeReferenceInvoiceKey(group.invoiceNumber);
+}
+
+function buildCreditNoteContext(
+  group: InvoiceGroup,
+  referenceInvoices: Map<string, ReferenceInvoice>,
+): CreditNoteContext {
+  if (group.documentType !== CREDIT_NOTE_DOCUMENT_TYPE) {
+    return {
+      isCreditNote: false,
+    };
+  }
+
+  const reference = referenceInvoices.get(
+    normalizeReferenceInvoiceKey(group.invoiceNumber),
+  );
+
+  if (!reference) {
+    return {
+      isCreditNote: true,
+    };
+  }
+
+  const isFullCancellation = isFullCreditNote(group, reference);
+
+  return {
+    isCreditNote: true,
+    reference,
+    referenceType: isFullCancellation ? "RAN" : "COR",
+    referenceDescription: isFullCancellation ? "ANNULATION" : "CORRECTION",
+  };
+}
+
+function isFullCreditNote(
+  group: InvoiceGroup,
+  reference: ReferenceInvoice,
+): boolean {
+  return (
+    amountsMatch(group.totalHT, reference.totalHT) &&
+    amountsMatch(group.totalTTC, reference.totalTTC)
+  );
+}
+
+function amountsMatch(left: number, right: number): boolean {
+  return Math.abs(roundCurrency(Math.abs(left)) - roundCurrency(Math.abs(right))) <= 0.05;
+}
+
+function formatCount(count: number, singular: string, plural: string): string {
+  return `${count} ${count > 1 ? plural : singular}`;
 }
 
 function createTaxRow(
@@ -414,6 +745,7 @@ function createTaxRow(
   normalizationDate: Date,
   exchangeRateUpdate: ConversionOptions["exchangeRateUpdate"],
   lineNumber: number,
+  creditNoteContext: CreditNoteContext,
 ): ExcelRow {
   const baseRow = createTraceableRow(
     group.rows[0] ?? {},
@@ -423,8 +755,11 @@ function createTaxRow(
     group.invoiceNumber,
     normalizationDate,
     exchangeRateUpdate,
+    dexyColumns,
+    creditNoteContext,
   );
   const taxTotal = roundCurrency(group.taxTotal);
+  const unitPrice = creditNoteContext.isCreditNote ? Math.abs(taxTotal) : taxTotal;
 
   return {
     ...baseRow,
@@ -434,7 +769,7 @@ function createTaxRow(
     [dexyColumns.itemType]: TAX_LINE_VALUES.itemType,
     [dexyColumns.taxGroup]: TAX_LINE_VALUES.taxGroup,
     [dexyColumns.quantity]: TAX_LINE_VALUES.quantity,
-    [dexyColumns.unitPrice]: taxTotal,
+    [dexyColumns.unitPrice]: unitPrice,
     [dexyColumns.unitPriceMode]: TAX_LINE_VALUES.unitPriceMode,
   };
 }
@@ -447,6 +782,8 @@ function createTraceableRow(
   invoiceNumber: string,
   normalizationDate: Date,
   exchangeRateUpdate?: ConversionOptions["exchangeRateUpdate"],
+  dexyColumns?: Record<DexyFieldKey, string>,
+  creditNoteContext?: CreditNoteContext,
 ): ExcelRow {
   const outputRow = stripColumn(row, taxColumn);
   const oldDate = row[dateColumn];
@@ -467,8 +804,62 @@ function createTraceableRow(
   applyDefaultValuesToExistingColumns(outputRow);
   applyNifRuleByClientTypology(outputRow);
   applyExchangeRateUpdate(outputRow, exchangeRateUpdate);
+  applyCreditNoteValues(outputRow, dexyColumns, creditNoteContext);
 
   return outputRow;
+}
+
+function applyCreditNoteValues(
+  row: ExcelRow,
+  dexyColumns?: Record<DexyFieldKey, string>,
+  creditNoteContext?: CreditNoteContext,
+): void {
+  if (!creditNoteContext?.isCreditNote) {
+    return;
+  }
+
+  if (dexyColumns) {
+    setPositiveNumericRowValue(row, dexyColumns.unitPrice);
+  }
+
+  if (!creditNoteContext.reference) {
+    return;
+  }
+
+  setRowValue(
+    row,
+    CREDIT_NOTE_ORIGIN_DGI_COLUMN,
+    creditNoteContext.reference.codeDefDgi,
+  );
+  setRowValue(
+    row,
+    CREDIT_NOTE_REFERENCE_TYPE_COLUMN,
+    creditNoteContext.referenceType ?? "",
+  );
+  setRowValue(
+    row,
+    CREDIT_NOTE_REFERENCE_DESCRIPTION_COLUMN,
+    creditNoteContext.referenceDescription ?? "",
+  );
+  setRowValue(
+    row,
+    CREDIT_NOTE_ORIGIN_ERP_INVOICE_COLUMN,
+    creditNoteContext.reference.invoiceNumber,
+  );
+  setRowValue(
+    row,
+    CREDIT_NOTE_ORIGIN_ERP_DATE_COLUMN,
+    creditNoteContext.reference.date,
+  );
+}
+
+function setPositiveNumericRowValue(row: ExcelRow, columnName: string): void {
+  const existingColumn = findExistingRowColumn(row, [columnName]) ?? columnName;
+  const numericValue = parseAmount(row[existingColumn]);
+
+  if (numericValue < 0) {
+    row[existingColumn] = Math.abs(numericValue);
+  }
 }
 
 function applyDefaultValuesToExistingColumns(row: ExcelRow): void {
@@ -634,6 +1025,11 @@ function buildOutputColumns(
     COMMENT_C_COLUMN,
     COMMENT_D_COLUMN,
     COMMENT_E_COLUMN,
+    COMMENT_F_COLUMN,
+    COMMENT_G_COLUMN,
+    COMMENT_H_COLUMN,
+    CREDIT_NOTE_ORIGIN_ERP_INVOICE_COLUMN,
+    CREDIT_NOTE_ORIGIN_ERP_DATE_COLUMN,
   ]) {
     if (!outputColumns.includes(column)) {
       outputColumns.push(column);
@@ -671,6 +1067,42 @@ function findColumn(columns: string[], candidates: string[]): string | undefined
   return columns.find((column) =>
     normalizedCandidates.includes(normalizeHeader(column)),
   );
+}
+
+function summarizeDocumentTypes(
+  rows: ExcelRow[],
+  documentTypeColumn?: string,
+): { hasSales: boolean; hasCreditNotes: boolean } {
+  if (!documentTypeColumn) {
+    return {
+      hasSales: false,
+      hasCreditNotes: false,
+    };
+  }
+
+  let hasSales = false;
+  let hasCreditNotes = false;
+
+  for (const row of rows) {
+    const documentType = normalizeDocumentType(row[documentTypeColumn]);
+
+    if (documentType === SALES_DOCUMENT_TYPE) {
+      hasSales = true;
+    }
+
+    if (documentType === CREDIT_NOTE_DOCUMENT_TYPE) {
+      hasCreditNotes = true;
+    }
+  }
+
+  return {
+    hasSales,
+    hasCreditNotes,
+  };
+}
+
+function normalizeDocumentType(value: ExcelCell): string {
+  return formatCellAsText(value).toUpperCase();
 }
 
 function findExciseTaxColumn(columns: string[]): string | undefined {
@@ -756,6 +1188,14 @@ function normalizeInvoiceNumber(value: ExcelCell): string {
   }
 
   return String(value).trim();
+}
+
+function normalizeReferenceInvoiceKey(value: ExcelCell): string {
+  return normalizeInvoiceNumber(value)
+    .replace(/^INV-DF-/i, "")
+    .replace(/-CN-\d+$/i, "")
+    .trim()
+    .toUpperCase();
 }
 
 function parseAmount(value: ExcelCell): number {

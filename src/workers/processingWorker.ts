@@ -1,4 +1,9 @@
-import type { ConversionResult, ExcelRow, ImportedWorkbook } from "../types";
+import type {
+  ConversionResult,
+  ExcelRow,
+  ImportedWorkbook,
+  ReferenceWorkbook,
+} from "../types";
 import { convertStarlinkToDexy } from "../utils/converter";
 import { readExcelFile } from "../utils/excel";
 
@@ -19,6 +24,7 @@ type ConvertWorkbookRequest = {
     rate: number;
     rateDate: Date;
   };
+  referenceWorkbook?: ReferenceWorkbook;
 };
 
 type WorkerRequest = ReadWorkbookRequest | ConvertWorkbookRequest;
@@ -62,6 +68,7 @@ async function handleMessage(message: WorkerRequest): Promise<void> {
     const conversion = convertStarlinkToDexy(message.rows, message.columns, {
       normalizationDate: message.normalizationDate,
       exchangeRateUpdate: message.exchangeRateUpdate,
+      referenceWorkbook: message.referenceWorkbook,
     });
 
     postResponse({

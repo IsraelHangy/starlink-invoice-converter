@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 import {
   AlertCircle,
   ArrowRightLeft,
+  CheckCircle2,
   DollarSign,
   Download,
+  FileSearch,
   Loader2,
   Play,
+  Upload,
   X,
 } from "lucide-react";
 import UploadCard from "./components/UploadCard";
@@ -42,6 +46,10 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [readingFileSize, setReadingFileSize] = useState<number | null>(null);
   const [showProcessingStatus, setShowProcessingStatus] = useState(false);
+  const [referenceWorkbook, setReferenceWorkbook] =
+    useState<ImportedWorkbook | null>(null);
+  const [creditNoteReferencePromptOpen, setCreditNoteReferencePromptOpen] =
+    useState(false);
   const [exchangeRatePromptOpen, setExchangeRatePromptOpen] = useState(false);
   const [dgiRateInput, setDgiRateInput] = useState("");
   const [dgiRateError, setDgiRateError] = useState<string | null>(null);
@@ -114,6 +122,8 @@ export default function App() {
   const handleWorkbookLoaded = (loadedWorkbook: ImportedWorkbook) => {
     setWorkbook(loadedWorkbook);
     setConversion(null);
+    setReferenceWorkbook(null);
+    setCreditNoteReferencePromptOpen(false);
     setPreviewMode("before");
     setError(null);
   };
@@ -121,6 +131,21 @@ export default function App() {
   const handleConvert = async () => {
     if (!workbook) {
       setError("Importez d'abord un fichier Excel Starlink.");
+      return;
+    }
+
+    const documentKind = getWorkbookDocumentKind(workbook.rows);
+
+    if (documentKind === "mixed") {
+      setError(
+        "Ce fichier contient a la fois des ventes (FV) et des avoirs (FA). Importez les ventes et les avoirs dans deux fichiers separes.",
+      );
+      return;
+    }
+
+    if (documentKind === "credit" && !referenceWorkbook) {
+      setCreditNoteReferencePromptOpen(true);
+      setError(null);
       return;
     }
 
@@ -136,6 +161,28 @@ export default function App() {
     }
 
     await runConversion();
+  };
+
+  const handleContinueAfterReference = () => {
+    if (!referenceWorkbook) {
+      setError("Importez le template reference DEXY avant de convertir l'avoir.");
+      return;
+    }
+
+    setCreditNoteReferencePromptOpen(false);
+
+    if (hasUsdRows(workbook?.rows ?? [])) {
+      setDgiRateInput("");
+      setDgiRateError(null);
+      setDgiRateMeta(null);
+      setDgiRatePlaceholder(getCachedBccRatePlaceholder());
+      setExchangeRatePromptOpen(true);
+      setError(null);
+      void loadBccUsdRate();
+      return;
+    }
+
+    void runConversion();
   };
 
   const runConversion = async (
@@ -155,18 +202,29 @@ export default function App() {
         workbook.columns,
         workbook.uploadedAt,
         exchangeRateUpdate,
+        getWorkbookDocumentKind(workbook.rows) === "credit" && referenceWorkbook
+          ? {
+              rows: referenceWorkbook.rows,
+              columns: referenceWorkbook.columns,
+            }
+          : undefined,
       );
       setConversion(convertedWorkbook);
       setPreviewMode("after");
       setError(null);
     } catch (caughtError) {
-      setConversion(null);
-      setPreviewMode("before");
-      setError(
+      const message =
         caughtError instanceof Error
           ? caughtError.message
-          : "Conversion impossible.",
-      );
+          : "Conversion impossible.";
+      setConversion(null);
+      setPreviewMode("before");
+      setError(message);
+
+      if (shouldResetCreditNoteReference(message, workbook.rows)) {
+        setReferenceWorkbook(null);
+        setCreditNoteReferencePromptOpen(false);
+      }
     } finally {
       setIsConverting(false);
     }
@@ -351,13 +409,27 @@ export default function App() {
           ) : null}
         </div>
 
-        <PreviewTable
-          title={preview.title}
-          rows={preview.rows}
-          columns={preview.columns}
-          emptyMessage={preview.emptyMessage}
-        />
+      <PreviewTable
+        title={preview.title}
+        rows={preview.rows}
+        columns={preview.columns}
+        emptyMessage={preview.emptyMessage}
+      />
       </div>
+
+      {creditNoteReferencePromptOpen ? (
+        <CreditNoteReferencePrompt
+          referenceWorkbook={referenceWorkbook}
+          onCancel={() => setCreditNoteReferencePromptOpen(false)}
+          onContinue={handleContinueAfterReference}
+          onReadReferenceFile={readExcelFileInWorker}
+          onReferenceLoaded={(loadedReferenceWorkbook) => {
+            setReferenceWorkbook(loadedReferenceWorkbook);
+            setError(null);
+          }}
+          onError={setError}
+        />
+      ) : null}
 
       {exchangeRatePromptOpen ? (
         <ExchangeRatePrompt
@@ -392,7 +464,7 @@ interface PreviewToggleProps {
 function ProcessingStatus({ message }: { message: string }) {
   return (
     <div
-      className="relative overflow-hidden rounded-lg border border-[#cbc5ff] bg-[#f5f3ff] px-4 py-4 text-sm text-[#29224f] shadow-sm sm:px-5"
+      className="relative overflow-hidden rounded-lg border border-[#cbc5ff] bg-[#f5f3ff] px-4 py-4 text-base text-[#29224f] shadow-sm sm:px-5"
       role="status"
       aria-live="polite"
     >
@@ -405,9 +477,9 @@ function ProcessingStatus({ message }: { message: string }) {
           <span className="dexy-processing-dot h-2.5 w-2.5 rounded-full bg-[#0f9af0]" />
         </div>
         <div className="min-w-0">
-          <p className="font-semibold text-[#171039]">Traitement en cours</p>
+          <p className="text-lg font-semibold text-[#171039]">Traitement en cours</p>
           <p className="mt-1 leading-6">{message}</p>
-          <p className="mt-2 text-xs font-medium text-[#5f55d6]">
+          <p className="mt-2 text-sm font-medium text-[#5f55d6]">
             Merci de patienter, la page reste active pendant la transformation.
           </p>
         </div>
@@ -419,21 +491,26 @@ function ProcessingStatus({ message }: { message: string }) {
 function ValidationErrorAlert({ message }: { message: string }) {
   return (
     <div
-      className="flex gap-4 rounded-2xl border border-[#8f2146] bg-[#210922] px-5 py-5 text-[#ff9db0] shadow-sm sm:px-6"
+      className="relative overflow-hidden rounded-lg border border-[#fecdd3] bg-[#fff1f2] px-4 py-4 text-base text-[#7f1d1d] shadow-sm sm:px-5"
       role="alert"
     >
-      <AlertCircle
-        aria-hidden="true"
-        className="mt-0.5 h-7 w-7 flex-none text-[#ff9db0]"
-        strokeWidth={2.2}
-      />
-      <div className="min-w-0">
-        <p className="text-lg font-bold leading-7 text-[#ffb0bf]">
-          Erreur de validation :
-        </p>
-        <p className="mt-1 text-base font-medium leading-7 text-[#ffb0bf] sm:text-lg">
-          {message}
-        </p>
+      <div className="absolute inset-x-0 top-0 h-1 bg-[#fb7185]" />
+      <div className="flex items-start gap-4">
+        <div className="mt-0.5 flex h-10 w-10 flex-none items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-[#fecdd3]">
+          <AlertCircle
+            aria-hidden="true"
+            className="h-5 w-5 text-[#e11d48]"
+            strokeWidth={2.3}
+          />
+        </div>
+        <div className="min-w-0">
+          <p className="text-lg font-semibold text-[#881337]">Erreur de validation</p>
+          <p className="mt-1 leading-6 text-[#7f1d1d]">{message}</p>
+          <p className="mt-2 text-sm font-medium text-[#be123c]">
+            Corrigez le fichier ou importez le bon template référence, puis relancez
+            la transformation.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -452,6 +529,168 @@ interface ExchangeRatePromptProps {
   onCancel: () => void;
   onKeepTemplate: () => void;
   onRateInputChange: (value: string) => void;
+}
+
+interface CreditNoteReferencePromptProps {
+  referenceWorkbook: ImportedWorkbook | null;
+  onCancel: () => void;
+  onContinue: () => void;
+  onReadReferenceFile: (file: File) => Promise<ImportedWorkbook>;
+  onReferenceLoaded: (workbook: ImportedWorkbook) => void;
+  onError: (message: string) => void;
+}
+
+function CreditNoteReferencePrompt({
+  referenceWorkbook,
+  onCancel,
+  onContinue,
+  onReadReferenceFile,
+  onReferenceLoaded,
+  onError,
+}: CreditNoteReferencePromptProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [isReadingReference, setIsReadingReference] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const handleReferenceFile = async (file?: File) => {
+    if (!file) {
+      return;
+    }
+
+    if (!/\.(xlsx|xls|xlsm|csv)$/i.test(file.name)) {
+      const message =
+        "Format non supporte. Importez le template reference DEXY en Excel.";
+      setLocalError(message);
+      onError(message);
+      return;
+    }
+
+    setIsReadingReference(true);
+    setLocalError(null);
+
+    try {
+      const loadedReferenceWorkbook = await onReadReferenceFile(file);
+      onReferenceLoaded(loadedReferenceWorkbook);
+    } catch (caughtError) {
+      const message =
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Lecture du template reference impossible.";
+      setLocalError(message);
+      onError(message);
+    } finally {
+      setIsReadingReference(false);
+    }
+  };
+
+  const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    void handleReferenceFile(event.target.files?.[0]);
+    event.target.value = "";
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 px-3 py-4 sm:items-center">
+      <section
+        aria-modal="true"
+        className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl"
+        role="dialog"
+      >
+        <header className="border-b border-[#746bff] px-5 py-4 sm:px-6">
+          <div className="flex items-start gap-4">
+            <button
+              aria-label="Fermer"
+              className="flex h-12 w-12 flex-none items-center justify-center rounded-full bg-[#f0efff] text-ink transition hover:bg-[#e2dfff]"
+              type="button"
+              onClick={onCancel}
+            >
+              <X aria-hidden="true" size={22} />
+            </button>
+            <div className="min-w-0 border-l-2 border-[#5f55d6] pl-4">
+              <h2 className="text-lg font-bold text-ink">
+                Reference DEXY des factures de vente
+              </h2>
+              <p className="mt-1 text-sm font-medium text-slate-400">
+                Requise pour convertir les avoirs FA
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <div className="px-5 py-6 sm:px-6 sm:py-8">
+          <p className="text-base leading-7 text-slate-700 sm:text-lg">
+            Ce fichier contient des avoirs. Importez le template reference DEXY
+            contenant les factures de vente certifiees afin de renseigner le
+            Code DEF DGI, la facture d'origine et le type de reference.
+          </p>
+
+          <div className="mt-5 rounded-xl border border-dashed border-[#c8c1ff] bg-[#f7f5ff] p-5 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#5f55d6] text-white">
+              {isReadingReference ? (
+                <Loader2 className="animate-spin" aria-hidden="true" size={24} />
+              ) : referenceWorkbook ? (
+                <CheckCircle2 aria-hidden="true" size={24} />
+              ) : (
+                <FileSearch aria-hidden="true" size={24} />
+              )}
+            </div>
+            <p className="mt-3 text-sm font-semibold text-ink">
+              {isReadingReference
+                ? "Lecture du template reference..."
+                : referenceWorkbook
+                  ? "Template reference DEXY charge"
+                  : "Selectionnez le template reference DEXY"}
+            </p>
+            {referenceWorkbook ? (
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                {referenceWorkbook.fileName} - {referenceWorkbook.rows.length}{" "}
+                ligne{referenceWorkbook.rows.length > 1 ? "s" : ""}
+              </p>
+            ) : null}
+            <button
+              className="mt-4 inline-flex items-center gap-2 rounded-md bg-[#5f55d6] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#5147c4] disabled:cursor-not-allowed disabled:bg-slate-400"
+              type="button"
+              disabled={isReadingReference}
+              onClick={() => inputRef.current?.click()}
+            >
+              <Upload aria-hidden="true" size={16} />
+              {referenceWorkbook ? "Remplacer le template" : "Importer le template"}
+            </button>
+            <input
+              ref={inputRef}
+              className="hidden"
+              type="file"
+              accept=".xlsx,.xls,.xlsm,.csv"
+              onChange={handleInputChange}
+            />
+          </div>
+
+          {localError ? (
+            <p className="mt-4 rounded-lg border border-[#8f2146] bg-[#210922] px-4 py-3 text-sm font-semibold text-[#ffb0bf]">
+              {localError}
+            </p>
+          ) : null}
+        </div>
+
+        <footer className="flex flex-col gap-3 border-t border-[#746bff] px-5 py-4 sm:flex-row sm:px-6">
+          <button
+            className="inline-flex h-11 flex-1 items-center justify-center rounded-lg border border-slate-300 bg-white px-5 text-sm font-bold text-ink transition hover:bg-slate-50"
+            type="button"
+            onClick={onCancel}
+          >
+            Annuler
+          </button>
+          <button
+            className="inline-flex h-11 flex-1 items-center justify-center rounded-lg bg-[#5f55d6] px-5 text-sm font-bold text-white transition hover:bg-[#5147c4] disabled:cursor-not-allowed disabled:bg-slate-400"
+            type="button"
+            disabled={!referenceWorkbook || isReadingReference}
+            onClick={onContinue}
+          >
+            Continuer la conversion
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
 }
 
 function ExchangeRatePrompt({
@@ -659,6 +898,61 @@ function getFileVolumeLabel(fileSize: number | null): string | null {
   }
 
   return "petit fichier";
+}
+
+type WorkbookDocumentKind = "sales" | "credit" | "mixed" | "unknown";
+
+function getWorkbookDocumentKind(rows: ConversionResult["rows"]): WorkbookDocumentKind {
+  const documentTypes = new Set<string>();
+
+  for (const row of rows) {
+    const typeValue = getRowValue(row, "Type facture");
+
+    if (typeValue === null || typeValue === undefined || typeValue === "") {
+      continue;
+    }
+
+    documentTypes.add(String(typeValue).trim().toUpperCase());
+  }
+
+  const hasSales = documentTypes.has("FV");
+  const hasCredit = documentTypes.has("FA");
+
+  if (hasSales && hasCredit) {
+    return "mixed";
+  }
+
+  if (hasCredit) {
+    return "credit";
+  }
+
+  if (hasSales) {
+    return "sales";
+  }
+
+  return "unknown";
+}
+
+function shouldResetCreditNoteReference(
+  message: string,
+  rows: ConversionResult["rows"],
+): boolean {
+  if (getWorkbookDocumentKind(rows) !== "credit") {
+    return false;
+  }
+
+  const normalizedMessage = message
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
+
+  return (
+    normalizedMessage.includes("conversion des avoirs impossible") ||
+    (normalizedMessage.includes("template reference dexy") &&
+      normalizedMessage.includes("code def dgi")) ||
+    (normalizedMessage.includes("template reference dexy") &&
+      normalizedMessage.includes("facture de vente"))
+  );
 }
 
 function hasUsdRows(rows: ConversionResult["rows"]): boolean {
@@ -945,7 +1239,9 @@ function buildDexyExportFileName(
   const currencies = collectExportCurrencies(rows);
   const currencyLabel =
     currencies.length > 1 ? "Multi_Devises" : currencies[0] ?? "CDF";
-  return `Dexy_${currencyLabel}_${formatExportDate(exportDate)}.xlsx`;
+  const documentKind = getWorkbookDocumentKind(rows);
+  const documentLabel = documentKind === "credit" ? "_AVOIR" : "";
+  return `Dexy_${currencyLabel}${documentLabel}_${formatExportDate(exportDate)}.xlsx`;
 }
 
 function collectExportCurrencies(rows: ConversionResult["rows"]): string[] {
