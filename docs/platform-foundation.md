@@ -12,6 +12,8 @@ the existing conversion rules.
 - The browser keeps doing Excel parsing and conversion.
 - Conversion metadata is saved after each successful conversion.
 - Original files and generated files can later be uploaded to Supabase Storage.
+- If Supabase variables are missing, the app keeps working with a no-op
+  repository and does not block conversion.
 
 ## First data to store
 
@@ -37,3 +39,16 @@ store the original rate when the sales invoice is converted or certified.
 - `develop` receives platform work.
 - Netlify preview deploys can be used for validation.
 - Merge to `main` only after business tests are approved.
+
+## Environment variables
+
+Configure these values in Netlify for preview/production once the Supabase
+project exists:
+
+```text
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+VITE_PLATFORM_ORGANIZATION_ID=
+```
+
+`VITE_PLATFORM_ORGANIZATION_ID` is optional until the platform UI is connected.
